@@ -3,7 +3,7 @@
 Execute com o diretório de trabalho apontando para a aplicação:
 
 ```sh
-cd ../area-do-candidato
+cd ../area-do-candidato-front
 python ../uni-cli/uni.py build
 python ../uni-cli/uni.py create page Cursos/Resumo
 python ../uni-cli/uni.py docker up -d
