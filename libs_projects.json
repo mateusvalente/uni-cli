@@ -1,0 +1,34 @@
+{
+  "libs": {
+    "application": {
+      "repository": "https://github.com/mateusvalente/application-core.git",
+      "composer_name": "uniube/application-core",
+      "root_name": "application-core",
+      "branch": "main",
+      "dependencies": []
+    },
+    "frontend": {
+      "repository": "https://github.com/mateusvalente/front-end-core.git",
+      "composer_name": "uniube/frontend-core",
+      "root_name": "frontend-core",
+      "branch": "main",
+      "dependencies": ["application"]
+    },
+    "components": {
+      "repository": "https://github.com/mateusvalente/components-core.git",
+      "composer_name": "uniube/components-core",
+      "root_name": "components-core",
+      "branch": "main",
+      "dependencies": ["application", "frontend"]
+    },
+    "backend": {
+      "repository": "https://github.com/mateusvalente/backend-core.git",
+      "composer_name": "uniube/backend-core",
+      "root_name": "backend-core",
+      "branch": "main",
+      "dependencies": [],
+      "description": "Pacote inicial reservado para futuras funcionalidades."
+    }
+  },
+  "projects": {}
+}
