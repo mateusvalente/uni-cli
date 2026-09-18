@@ -114,7 +114,6 @@ class Workspace:
                 else: fcntl.flock(stream, fcntl.LOCK_UN)
 
     def scan(self):
-        (self.root / 'projetos').mkdir(exist_ok=True)
         projects = {}
         composer_names = set()
         for folder, directories, files in os.walk(self.root):
@@ -357,7 +356,7 @@ def clone_project(ws, name, no_install=False):
     if name not in ws.catalog['projects']: raise ValueError('Projeto nao cadastrado: ' + name)
     entry = ws.catalog['projects'][name]
     repository_identity(entry['repository'])
-    root = ws.root / 'projetos' / slug(entry['root_name'])
+    root = ws.root / slug(entry['root_name'])
     if name in ws.state['projects'] or root.exists(): raise ValueError('Projeto ja existe localmente: ' + name)
     root.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root.parent, prefix='.clone-') as temporary:

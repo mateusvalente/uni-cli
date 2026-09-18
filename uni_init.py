@@ -82,7 +82,7 @@ networks:
         (root / 'nginx/default.conf').write_text(nginx, encoding='utf-8')
         (root / '.gitattributes').write_text('* text=auto\n*.sh text eol=lf\n*.conf text eol=lf\n*.yaml text eol=lf\n', encoding='utf-8')
         (root / '.gitignore').write_text('.env\n.env.*\n!.env.example\n', encoding='utf-8')
-        (root / '.env.example').write_text(f'PROJECT_PATH=../projetos/{name}\nCOMPOSE_PROJECT_NAME={name}\nAPP_PORT={port}\nENVIRONMENT_NETWORK={environment}-network\n', encoding='utf-8')
+        (root / '.env.example').write_text(f'PROJECT_PATH=../{name}\nCOMPOSE_PROJECT_NAME={name}\nAPP_PORT={port}\nENVIRONMENT_NETWORK={environment}-network\n', encoding='utf-8')
         script = root / 'php/start.sh'; script.write_bytes(script.read_bytes().replace(b'\r\n', b'\n'))
         (root / 'README.md').write_text(f'# {name}\n\nBranch do ambiente {environment}, papel {role}.\nUse uni use {environment} para configurar os caminhos locais e iniciar.\n', encoding='utf-8')
         run(['git', 'add', '--all'], root)
@@ -120,7 +120,7 @@ def initialize(args, init_project, select_libraries, load_config):
         raise ValueError('Backend nao cadastrado: ' + args.backend)
     if args.backend and role != 'front': raise ValueError('Somente frontend pode associar backend.')
     selected = select_libraries(args)
-    root = Path(args.path).resolve() if args.path else ws.root / 'projetos' / name
+    root = Path(args.path).resolve() if args.path else ws.root / name
     if root.exists() and any(root.iterdir()):
         raise ValueError('A pasta de destino deve estar vazia: ' + str(root))
     repository = args.repository

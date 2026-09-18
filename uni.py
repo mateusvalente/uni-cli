@@ -402,7 +402,7 @@ def main() -> int:
     register.add_argument('--backend')
     register.add_argument('--docker-repository')
     register.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
-    clone = project_actions.add_parser('clone', help='Clonar um projeto cadastrado para projetos/ e instalar dependencias.')
+    clone = project_actions.add_parser('clone', help='Clonar um projeto cadastrado na raiz do workspace e instalar dependencias.')
     clone.add_argument('name')
     clone.add_argument('--no-install', action='store_true')
     commands.add_parser("build", help="Compilar rotas, templates, componentes e assets.")

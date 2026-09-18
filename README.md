@@ -16,10 +16,10 @@ uni status
 ```
 
 Abra outro terminal depois de instalar a integracao. A politica PowerShell precisa permitir scripts locais; o instalador nao altera essa politica automaticamente. `uni start` consulta o catalogo,
-verifica Git/Docker/Compose/PHP, cria `projetos/` e mapeia os composer.json das aplicacoes.
+verifica Git/Docker/Compose/PHP e mapeia os composer.json das aplicacoes.
 Ignora libs, vendor, storage, tests e diretorios de ferramentas. Duplicatas interrompem
 o mapeamento sem substituir o mapa anterior. `--offline` apenas mapeia o disco.
-Projetos existentes podem continuar na raiz; novos projetos vao para `projetos/`.
+Projetos existentes e novos ficam diretamente na raiz do workspace, ao lado dos diretorios Docker.
 
 `libs_projects.json` e o catalogo compartilhavel. `.uni/workspace.json` no workspace
 guarda caminhos locais, ambiente e projeto selecionado. `.local.json` ao lado do CLI

@@ -28,7 +28,7 @@ class Workflows(unittest.TestCase):
         self.pointer.start(); self.addCleanup(self.pointer.stop)
 
     def project(self, name, relative=None):
-        folder = self.root / (relative or ('projetos/' + name))
+        folder = self.root / (relative or name)
         folder.mkdir(parents=True)
         write_json(folder / 'composer.json', {'name': 'example/' + name, 'type': 'project'})
         return folder
@@ -123,7 +123,7 @@ class Workflows(unittest.TestCase):
                'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
         with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), patch.dict(os.environ, env):
             uni_init.initialize(args, uni.init_project, uni.select_libraries, uni.load_config)
-        root = self.root / 'projetos/new-project'
+        root = self.root / 'new-project'
         self.assertTrue((root / 'public/index.php').is_file())
         self.assertEqual(json.loads((root / 'composer.json').read_text())['autoload']['psr-4'], {'NewProject\\': 'src/'})
         self.assertNotIn('ApplicationCore', (root / 'public/index.php').read_text())
