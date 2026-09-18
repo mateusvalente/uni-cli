@@ -154,6 +154,34 @@ class Workflows(unittest.TestCase):
         self.assertIn('external: true', (clone / 'compose.yaml').read_text())
         self.assertTrue((clone / '.env.example').exists())
 
+    def test_full_init_publishes_project_docker_and_catalog(self):
+        import uni_init
+        cli = self.root / 'cli'; self.repo(cli)
+        catalog = cli / 'libs_projects.json'; write_json(catalog, {'libs': {}, 'projects': {}})
+        self.git(cli, 'add', '.'); self.git(cli, 'commit', '-m', 'Catalog')
+        catalog_remote = self.root / 'catalog.git'; self.git(self.root, 'init', '--bare', catalog_remote)
+        self.git(cli, 'remote', 'add', 'origin', catalog_remote); self.git(cli, 'push', '-u', 'origin', 'main')
+        project_remote = self.root / 'project.git'; self.git(self.root, 'init', '--bare', project_remote)
+        template = self.root / 'docker-template'; self.repo(template)
+        for name in ['uni/Dockerfile', 'php/start.sh', 'php/development.ini', 'nginx/default.conf']:
+            file = template / name; file.parent.mkdir(parents=True, exist_ok=True); file.write_text('# template\n')
+        self.git(template, 'add', '.'); self.git(template, 'commit', '-m', 'Template')
+        original = self.git(template, 'rev-parse', 'main')
+        ws = work.Workspace(self.root, catalog); ws.scan()
+        args = SimpleNamespace(catalog=catalog, local=False, vendor='example', project='Demo', name='demo',
+                               role='front', environment='demo', port=8098, backend=None, path=None,
+                               repository=str(project_remote), docker_repository=str(template),
+                               no_install=True, no_framework=True, libs=None)
+        env = {'GIT_AUTHOR_NAME': 'CLI Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+               'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
+        with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), patch.object(uni_init, 'repository_identity'), patch.object(projects, 'repository_identity', side_effect=lambda value: value), patch.dict(os.environ, env):
+            uni_init.initialize(args, uni.init_project, uni.select_libraries, uni.load_config)
+        self.assertEqual(self.git(template, 'rev-parse', 'main'), original)
+        self.assertIn('PROJECT_PATH', self.git(template, 'show', 'demo:compose.yaml'))
+        self.assertEqual(json.loads(self.git(project_remote, 'show', 'main:composer.json'))['name'], 'example/demo')
+        published = json.loads(self.git(catalog_remote, 'show', 'main:libs_projects.json'))
+        self.assertEqual(published['projects']['demo']['docker']['branch'], 'demo')
+
     def test_failure_restores_previous_selection_and_env(self):
         self.project('candidate-front'); self.project('other-front')
         ws = work.Workspace(self.root, self.catalog); ws.scan()
