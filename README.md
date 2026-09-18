@@ -1,70 +1,141 @@
-# uni-cli
+# Uni CLI
 
-Execute com o diretório de trabalho apontando para a aplicação:
+O Python roda no Windows. Criacao de fontes, Git, mapa local e selecao ficam no host.
+Composer, PHP, limpeza de cache e **todo o build**, incluindo compilados, assets, manifestos e versoes,
+rodam no Linux do Docker. Nao e necessario instalar PHP/Composer no Windows.
 
-```sh
-cd ../area-do-candidato-front
-python ../uni-cli/uni.py build
-python ../uni-cli/uni.py create page Cursos/Resumo
-python ../uni-cli/uni.py docker up -d
+## Instalacao e workspace
+
+Instale Python, Git, Docker Desktop com containers Linux e Compose. Adicione esta
+pasta ao PATH; `uni.cmd` encaminha os argumentos ao Python. No PowerShell:
+
+```powershell
+uni shell install
+uni start C:/workspace
+uni status
 ```
 
-Scripts internos e templates são resolvidos em relação ao próprio `uni.py`.
-`libs_projects.json` pertence à ferramenta; as dependências da aplicação
-são definidas no seu `composer.json`.
+Abra outro terminal depois de instalar a integracao. A politica PowerShell precisa permitir scripts locais; o instalador nao altera essa politica automaticamente. `uni start` consulta o catalogo,
+verifica Git/Docker/Compose/PHP, cria `projetos/` e mapeia os composer.json das aplicacoes.
+Ignora libs, vendor, storage, tests e diretorios de ferramentas. Duplicatas interrompem
+o mapeamento sem substituir o mapa anterior. `--offline` apenas mapeia o disco.
+Projetos existentes podem continuar na raiz; novos projetos vao para `projetos/`.
 
-`init uniube AreaDoCandidato` cria `src/Core`, `src/Programs` e `src/Config`,
-com o namespace `AreaDoCandidato` mapeado diretamente para `src/`. O mesmo
-manifesto registra o nome Composer e `extra.uni.docker.port` (padrão 8080).
-O comando `docker` usa esses metadados e a pasta atual para selecionar a aplicação.
+`libs_projects.json` e o catalogo compartilhavel. `.uni/workspace.json` no workspace
+guarda caminhos locais, ambiente e projeto selecionado. `.local.json` ao lado do CLI
+aponta para o workspace em uso; ambos sao locais e nao devem ser publicados.
 
-## Bibliotecas
+## Ambientes e projeto de trabalho
 
-Dentro do projeto (substitua `uni` por `python ../uni-cli/uni.py` quando necessário):
+```powershell
+uni projects
+uni use area-candidato
+uni back
+uni front
+uni where
+uni up
+uni down
+uni status
+```
 
-```sh
-uni init minhaempresa MeuProjeto
-uni init minhaempresa MinhaApi --libs application
-uni init minhaempresa MeuSite --libs components
-uni init minhaempresa MeuSite --libs components backend
-uni init minhaempresa SemFramework --no-framework
+Um ambiente pode ter front/back ou somente uma aplicacao. `use` verifica os dois
+repositorios Docker antes de parar o ambiente anterior, atualiza suas branches apenas
+por fast-forward, gera `.env` com os caminhos locais e sobe backend antes de frontend.
+Verifica portas, PHP e Nginx. Alteracoes locais no Docker impedem a troca.
+Se a troca falhar, tenta restaurar branches, arquivos .env e containers anteriores;
+qualquer falha de recuperacao fica registrada e aparece em `status`.
+
+`back`/`front` selecionam o projeto para os proximos comandos sem reiniciar containers.
+A funcao PowerShell instalada por `shell install` tambem muda a pasta do terminal.
+A selecao do ambiente/projeto e compartilhada no workspace (um ambiente por vez).
+Em projeto avulso nao mapeado, o CLI usa o composer.json da pasta atual ou ancestral.
+
+Depois de `use`, escolha: manter as janelas (Enter/padrao), abrir novas ou reutilizar
+uma janela do VS Code. Sem terminal interativo, nao altera o editor. `--editor none`,
+`new` ou `reuse` permite escolher explicitamente. Fora do terminal VS Code, reuse abre
+novas janelas. Arquivos nao salvos ficam sob os controles do editor.
+
+## Registrar, clonar e publicar catalogo
+
+```powershell
+uni project register https://github.com/usuario/meu-back.git --role back --environment meu
+uni project register https://github.com/usuario/meu-front.git --role front --environment meu --backend meu-back
+uni project clone meu-back
+uni project clone meu-front
+uni catalog sync
+uni catalog publish
+uni catalog verify
+```
+
+`register` pode receber somente o Git: consulta composer.json da branch padrao sem
+executar o codigo remoto. `--path` permite ler o manifesto local, inclusive para um
+repositorio vazio. `--name` escolhe o identificador. O comando valida duplicatas,
+registra associacoes e prepara uma branch Docker a partir da main se ainda nao houver.
+Usa `docker_repository` do catalogo ou `--docker-repository`.
+
+Por padrao, publica o cadastro com commit apenas do JSON e push na branch atual do
+uni-cli. Alteracoes alheias nao entram no commit do catalogo. Concorrencia/divergencia
+Git impede o push, sem forcar sobrescrita. `--local` salva sem publicar.
+`catalog_url` e verificado depois do push; GitHub Pages pode demorar para propagar.
+`catalog verify` permite confirmar a publicacao depois. Falha de push deixa o commit
+local recuperavel por `uni push --cli`; nao informa sucesso remoto indevidamente.
+
+`clone` instala as bibliotecas pelo Composer e atualiza o mapa; use `--no-install`
+para apenas clonar. O caminho local nunca entra no catalogo compartilhado.
+
+## Criar projeto
+
+Crie primeiro um repositorio Git vazio no provedor. Depois:
+
+```powershell
+uni init minhaempresa MeuBack --name meu-back --role back --environment meu --repository https://github.com/usuario/meu-back.git --libs application
+uni init minhaempresa MeuFront --name meu-front --role front --environment meu --backend meu-back --repository https://github.com/usuario/meu-front.git --libs components
+```
+
+Sem `--libs` ou `--no-framework`, pergunta se deseja framework e quais partes.
+As dependencias transitivas sao instaladas automaticamente. Backend rejeita frontend
+ou components. `--port` configura a porta; defaults front 8080 e back 8082.
+A estrutura e index sao criados no Windows, depois Composer/build no Docker.
+O CLI inicializa e publica o Git do projeto, cria/publica a branch Docker a partir da
+main e publica o catalogo. Cada etapa remota e independente: em falha, os arquivos e
+commits anteriores ficam preservados para recuperacao, sem apagar repositorios.
+`--local` cria sem publicacoes; `--no-install` prepara as fontes sem instalar vendor.
+O nome de namespace PHP e o argumento MeuBack/MeuFront, mapeado diretamente para src/.
+
+## Desenvolvimento e dependencias
+
+```powershell
+uni create page Cursos/Resumo
+uni create component Atoms/Badge
+uni build
 uni composer install
 uni composer update
-uni composer update frontend
-uni composer add components
 uni composer add psr/log --version ^3.0
 uni composer remove psr/log
-uni libs
 uni composer list
-uni composer show frontend
+uni composer show application
 uni composer search logger
+uni libs
+uni cache clear
+uni push --message "Atualiza pagina de cursos"
 ```
 
-O `init` pergunta se deve usar o framework e quais núcleos instalar. Em scripts,
-informe `--libs` ou `--no-framework`. Selecionar frontend inclui application;
-selecionar components inclui ambos. Backend é um pacote inicial sem funcionalidades.
-`--no-install` prepara os clones e o manifesto, mas não instala `vendor/`.
+Composer usa clones Git em libs/ e dependencias em vendor/. Fontes sujas nao sao
+substituidas por updates. Remover um pacote preserva seu clone local.
+`build` apenas dispara o worker Linux e mostra o resultado; nao percorre links Linux
+nem publica artefatos pelo Windows. Build executa mesmo com os servidores parados.
+`uni docker ...` encaminha argumentos ao Compose do projeto selecionado.
 
-Os remotes estão em `libs_projects.json`. O nome do repositório `front-end-core`
-corresponde ao pacote Composer `uniube/frontend-core` e à pasta `libs/frontend-core`.
+`push` exige Git proprio, origin, branch e ausencia de conflitos/rebase. Mostra as
+alteracoes e solicita mensagem quando faltam commits; em scripts use --message.
+Publica somente o projeto selecionado. `--cli` seleciona explicitamente a ferramenta.
+Nunca usa force push nem inclui os repositorios Docker automaticamente.
 
-O CLI clona os núcleos em `libs/`; Composer resolve suas dependências e cria o
-autoload em `vendor/`. Pacotes externos são instalados pelo Composer em `vendor/`.
-Se Composer não estiver instalado na máquina, o CLI usa o serviço Docker `uni`.
+O banner aparece somente em `uni` sem argumentos e na ajuda.
 
-`composer.json`, em `extra.uni.libraries`, registra o remote, a branch e o commit
-de cada núcleo. `composer.lock` registra a resolução do Composer. Versione ambos.
-`uni composer install` recria clones ausentes nos commits registrados, sem buscar
-automaticamente versões novas. `uni composer update` consulta as branches remotas,
-avança os clones e atualiza os dois arquivos. As branches atuais usam `dev-main`;
-o projeto permite versões de desenvolvimento e prefere versões estáveis externas.
+## Testes
 
-Alterações locais impedem operações que possam substituir fontes. Faça commit ou
-stash antes de atualizar; commits divergentes do remote não são descartados.
-Remover uma biblioteca retira a dependência direta; Composer conserva dependências
-ainda necessárias. Clones desinstalados permanecem em `libs/` para preservar fontes.
-Em caso de falha, manifesto, lock e checkouts anteriores são restaurados; se o
-Composer já tiver alterado `vendor/`, execute `uni composer install` para reconciliá-lo.
-
-`libs/` é ignorada pelo Git da aplicação porque cada clone tem seu próprio Git.
-Uma cópia nova da aplicação deve executar `uni composer install` antes do build.
+Os testes novos do CLI estao em tests/. Execute `python -m unittest discover -s tests`.
+Para um checkout somente leitura no Docker, defina UNI_TEST_TMP para uma pasta dentro
+dos testes da aplicacao. A suite usa Git local para verificar publicacao, duplicatas,
+rollback, init, branches Docker e preservacao de arquivos alheios.

@@ -1,0 +1,8 @@
+name: uni-tools
+services:
+  tools:
+    build: .
+    working_dir: /var/www/html
+    volumes:
+      - ${UNI_PROJECT_PATH:?Projeto necessario}:/var/www/html
+      - ${UNI_CLI_PATH:?CLI necessario}:/opt/uni-cli:ro

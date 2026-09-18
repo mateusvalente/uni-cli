@@ -12,14 +12,19 @@
       "composer_name": "uniube/frontend-core",
       "root_name": "frontend-core",
       "branch": "main",
-      "dependencies": ["application"]
+      "dependencies": [
+        "application"
+      ]
     },
     "components": {
       "repository": "https://github.com/mateusvalente/components-core.git",
       "composer_name": "uniube/components-core",
       "root_name": "components-core",
       "branch": "main",
-      "dependencies": ["application", "frontend"]
+      "dependencies": [
+        "application",
+        "frontend"
+      ]
     },
     "backend": {
       "repository": "https://github.com/mateusvalente/backend-core.git",
@@ -30,5 +35,37 @@
       "description": "Pacote inicial reservado para futuras funcionalidades."
     }
   },
-  "projects": {}
+  "projects": {
+    "area-candidato-back": {
+      "repository": "https://github.com/mateusvalente/area-candidato-back.git",
+      "composer_name": "uniube/area-do-candidato-back",
+      "root_name": "area-do-candidato-back",
+      "branch": "main",
+      "docker": {
+        "repository": "https://github.com/mateusvalente/docker.git",
+        "branch": "area-candidato-back",
+        "directory": "docker-back"
+      },
+      "role": "back",
+      "environment": "area-candidato"
+    },
+    "area-candidato-front": {
+      "repository": "https://github.com/mateusvalente/area-candidato-front.git",
+      "composer_name": "uniube/area-do-candidato-front",
+      "root_name": "area-do-candidato-front",
+      "branch": "main",
+      "docker": {
+        "repository": "https://github.com/mateusvalente/docker.git",
+        "branch": "area-candidato-front",
+        "directory": "docker-front"
+      },
+      "related": {
+        "backend": "area-candidato-back"
+      },
+      "role": "front",
+      "environment": "area-candidato"
+    }
+  },
+  "catalog_url": "https://mateusvalente.github.io/uni-cli/libs_projects.json",
+  "docker_repository": "https://github.com/mateusvalente/docker.git"
 }

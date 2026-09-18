@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+.local.json
+.scratch/
+.uni/
+tests/.tmp/
+.uni-*.lock

@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from uni_packages import Packages
+from uni_projects import register_project
 
 
 DEFAULT_CONFIG = Path(__file__).resolve().with_name("libs_projects.json")
@@ -159,111 +160,14 @@ def select_libraries(args):
 
 
 def build_routes(root: Path) -> int:
-    """Serializa a publicacao para que dois builds nao disputem a mesma versao."""
-    with (root / '.uni-build.lock').open('a+b') as lock:
-        if os.name == 'nt':
-            import msvcrt
-            lock.seek(0)
-            if not lock.read(1):
-                lock.write(b'0')
-                lock.flush()
-            lock.seek(0)
-            try:
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            except OSError as exc:
-                raise ValueError('Outro build esta em andamento neste projeto.') from exc
-        else:
-            import fcntl
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise ValueError('Outro build esta em andamento neste projeto.') from exc
-        return _build_routes(root)
-
-
-def _build_routes(root: Path) -> int:
-    """Usa Composer e Reflection no build; publica o JSON apenas apos sucesso."""
-    root = root.resolve()
-    if not (root / "composer.json").is_file():
-        raise ValueError("composer.json nao encontrado. Inicialize o projeto antes do build.")
-    if not (root / "src").is_dir():
-        raise ValueError("A pasta src nao foi encontrada.")
-    output = root / "routes.json"
-    if output.is_symlink() or (output.exists() and not output.is_file()):
-        raise ValueError("routes.json deve ser um arquivo regular.")
-
-    compiler = Path(__file__).resolve().parent / ".dist" / "uni" / "build_routes.php"
-    def run(command: list[str]) -> subprocess.CompletedProcess:
-        try:
-            result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8")
-        except FileNotFoundError as exc:
-            raise ValueError(f"'{command[0]}' nao encontrado. Execute o build pelo servico uni do Docker.") from exc
-        if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip()
-            raise ValueError(f"Falha ao executar {command[0]}:\n{detail}")
-        return result
-
-    run(["composer", "dump-autoload", "--optimize", "--strict-psr", "--strict-ambiguous", "--no-scripts", "--no-plugins", "--no-interaction"])
-    with tempfile.TemporaryDirectory(dir=root, prefix=".uni-build-") as stage_name:
-        stage = Path(stage_name).resolve()
-        if not stage.is_relative_to(root):
-            raise ValueError("Diretorio temporario fora do projeto.")
-        versions = root / "storage/framework/assets"
-        if versions.is_dir():
-            index_file = versions / "versions.json"
-            if index_file.is_file():
-                index = json.loads(index_file.read_text(encoding="utf-8"))
-                migrated = {}
-                for name, entry in index.get("assets", {}).items():
-                    if name.startswith(("components/", "views/")):
-                        continue
-                    if name.startswith("pages/"):
-                        filename = name.rsplit("/", 1)[-1]
-                        page_name = filename.split(".", 1)[0]
-                        slug = re.sub(r"(?<!^)([A-Z])", r"-\1", page_name).lower()
-                        name = slug + "/" + filename
-                    if name in migrated:
-                        raise ValueError("Nome de page duplicado no historico de assets: " + name)
-                    migrated[name] = entry
-                index["assets"] = migrated
-                index.pop("files", None)
-                staged_index = stage / "storage/framework/assets/versions.json"
-                staged_index.parent.mkdir(parents=True)
-                staged_index.write_text(json.dumps(index, separators=(",", ":")), encoding="utf-8")
-        result = run(["php", str(compiler), str(root), str(stage)])
-        try:
-            document = json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            raise ValueError("O compilador PHP nao retornou um JSON valido.") from exc
-        if not isinstance(document, dict) or not isinstance(document.get("routes"), list):
-            raise ValueError("O compilador PHP retornou um formato de rotas invalido.")
-
-        runtime = root / "storage/framework"
-        manifest_dir = runtime / "manifest"
-        for directory in [root / "storage", runtime, manifest_dir]:
-            if directory.is_symlink() or not directory.resolve().is_relative_to(root):
-                raise ValueError("O cache de build deve ficar dentro do projeto.")
-            directory.mkdir(exist_ok=True)
-        artifacts = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
-        for name, relative in artifacts.items():
-            destination = root / relative
-            if not destination.resolve().is_relative_to(root) or not (
-                relative.startswith(("storage/framework/", "public/assets/")) or ".compiled." in destination.name
-            ):
-                raise ValueError("Destino de compilacao invalido ou fora do projeto.")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            prepared = stage / "artifacts" / name
-            if not destination.is_file() or destination.read_bytes() != prepared.read_bytes():
-                os.replace(prepared, destination)
-        with (stage / "routes.json").open("w", encoding="utf-8", newline="\n") as stream:
-            json.dump(document, stream, indent=2, ensure_ascii=False, allow_nan=False)
-            stream.write("\n")
-        # O manifesto ativo só aponta para templates completamente compilados.
-        os.replace(stage / "components.php", manifest_dir / "components.php")
-        os.replace(stage / "assets.php", manifest_dir / "assets.php")
-        os.replace(stage / "build.php", manifest_dir / "build.php")
-        os.replace(stage / "routes.json", output)
-    return len(document["routes"])
+    """O host apenas solicita o build completo ao worker Linux."""
+    if Path('/.dockerenv').exists():
+        from uni_build import build_routes as linux_build
+        return linux_build(root)
+    from uni_runtime import run_tool
+    worker = Path(__file__).resolve().with_name('uni_build.py')
+    result = run_tool(root.resolve(), 'python3', ['-B', str(worker), '/var/www/html'], capture=True)
+    return json.loads(result.stdout)['routes']
 
 
 def scaffold(kind: str, name: str, root: Path, project: str | None = None,
@@ -405,9 +309,32 @@ def scaffold(kind: str, name: str, root: Path, project: str | None = None,
 
 
 def main() -> int:
+    banner = Path(__file__).resolve().with_name('banner.txt')
+    if (len(sys.argv) == 1 or sys.argv[1] == 'help' or '--help' in sys.argv[1:] or '-h' in sys.argv[1:]) and banner.is_file():
+        print(banner.read_text(encoding='utf-8-sig').rstrip('\r\n'), flush=True)
+        print(flush=True)
     parser = argparse.ArgumentParser(description="Ferramentas do framework PHP: build e geracao de fontes.",
                                     epilog="Exemplos: uni help create view | uni create view Cursos/ResumoView | uni build")
     commands = parser.add_subparsers(dest="command")
+    start = commands.add_parser('start', help='Mapear os projetos do workspace no Windows.')
+    start.add_argument('path', nargs='?', type=Path, default=Path.cwd())
+    start.add_argument('--offline', action='store_true', help='Somente mapear; sem validar Docker ou atualizar catalogo remoto.')
+    use = commands.add_parser('use', help='Trocar o ambiente, atualizar branches Docker e recarregar containers.')
+    use.add_argument('environment')
+    use.add_argument('--editor', choices=['none', 'new', 'reuse'])
+    for command, description in [('back', 'Selecionar o backend.'), ('front', 'Selecionar o frontend.'),
+                                 ('up', 'Subir o ambiente ativo.'), ('down', 'Parar o ambiente ativo.'),
+                                 ('status', 'Mostrar ambiente, projetos, branches e containers.'),
+                                 ('where', 'Mostrar o caminho do projeto selecionado.'),
+                                 ('projects', 'Listar projetos registrados.'), ('doctor', 'Validar Git, Docker, Compose e PHP.')]:
+        commands.add_parser(command, help=description)
+    push = commands.add_parser('push', help='Publicar commits do projeto selecionado ou do CLI.')
+    push.add_argument('--message', '-m')
+    push.add_argument('--cli', action='store_true', help='Publicar o repositorio uni-cli.')
+    catalog_cmd = commands.add_parser('catalog', help='Sincronizar, publicar ou verificar o catalogo compartilhado.')
+    catalog_cmd.add_argument('action', choices=['sync', 'publish', 'verify'])
+    shell_cmd = commands.add_parser('shell', help='Instalar a funcao PowerShell que acompanha back/front/use.')
+    shell_cmd.add_argument('action', choices=['install'])
     help_command = commands.add_parser("help", help="Mostrar ajuda geral ou de um comando.")
     help_command.add_argument("topic", nargs="*", help="Exemplos: help build; help create page.")
     create = commands.add_parser("create", help="Criar View, Layout, Page ou Component com templates padrao.")
@@ -436,6 +363,15 @@ def main() -> int:
     selection.add_argument("--no-framework", action='store_true', help="Criar projeto sem os nucleos do framework.")
     init.add_argument("--no-install", action='store_true', help="Preparar clones e manifesto sem instalar vendor/.")
     init.add_argument("--catalog", type=Path, default=DEFAULT_CONFIG, help="Catalogo de bibliotecas.")
+    init.add_argument('--repository', help='Git vazio da nova aplicacao.')
+    init.add_argument('--name', help='Identificador no catalogo.')
+    init.add_argument('--path', type=Path)
+    init.add_argument('--role', choices=['front', 'back'])
+    init.add_argument('--environment')
+    init.add_argument('--backend', help='Identificador do backend associado.')
+    init.add_argument('--port', type=int)
+    init.add_argument('--docker-repository')
+    init.add_argument('--local', action='store_true', help='Criar localmente, sem publicar Git/catalogo.')
     packages = commands.add_parser('composer', help='Instalar, atualizar, adicionar, remover ou consultar bibliotecas.')
     packages.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
     actions = packages.add_subparsers(dest='composer_action', required=True)
@@ -454,6 +390,21 @@ def main() -> int:
     search.add_argument('term')
     libs = commands.add_parser('libs', help='Listar catalogo, bibliotecas instaladas, versoes e commits.')
     libs.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
+    project = commands.add_parser('project', help='Gerenciar projetos do catalogo.')
+    project_actions = project.add_subparsers(dest='project_action', required=True)
+    register = project_actions.add_parser('register', help='Consultar um Git e publicar seu registro no catalogo.')
+    register.add_argument('repository', help='URL HTTPS ou SSH do repositorio Git.')
+    register.add_argument('--path', type=Path, help='Manifesto local opcional; por padrao consulta o Git remoto.')
+    register.add_argument('--name', help='Identificador no catalogo; padrao: nome do repositorio.')
+    register.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
+    register.add_argument('--role', choices=['front', 'back'])
+    register.add_argument('--environment')
+    register.add_argument('--backend')
+    register.add_argument('--docker-repository')
+    register.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
+    clone = project_actions.add_parser('clone', help='Clonar um projeto cadastrado para projetos/ e instalar dependencias.')
+    clone.add_argument('name')
+    clone.add_argument('--no-install', action='store_true')
     commands.add_parser("build", help="Compilar rotas, templates, componentes e assets.")
     docker_cmd = commands.add_parser("docker", help="Executar Docker Compose para o projeto atual.")
     docker_cmd.add_argument("arguments", nargs=argparse.REMAINDER, help="Argumentos do Compose, por exemplo up -d.")
@@ -467,9 +418,9 @@ def main() -> int:
         topic = getattr(args, "topic", [])
         if not topic:
             parser.print_help()
-        elif topic[0] in {"init", "validate", "build", "cache", "docker", "composer", "libs"} and len(topic) == 1:
+        elif topic[0] in commands.choices and len(topic) == 1:
             parser.parse_args([*topic, "--help"])
-        elif topic[0] == 'composer' and len(topic) == 2:
+        elif topic[0] in ('composer', 'project') and len(topic) == 2:
             parser.parse_args([*topic, '--help'])
         elif topic[0] == "create" and (len(topic) == 1 or (len(topic) == 2 and topic[1] in {"view", "layout", "page", "component", "components"})):
             parser.parse_args([*topic, "--help"])
@@ -478,8 +429,67 @@ def main() -> int:
         return 0
 
     try:
+        from uni_workspace import Workspace, current_project, doctor, push_project
+        from uni_projects import register_and_publish, sync_catalog, publish_catalog
+        if args.command == 'shell':
+            from uni_shell import install
+            install()
+            return 0
+        if args.command == 'doctor':
+            from uni_runtime import run_tool
+            doctor(); run_tool(Path.cwd(), 'php', ['-v'])
+            return 0
+        if args.command == 'start':
+            if not args.offline:
+                doctor(); sync_catalog(DEFAULT_CONFIG)
+                from uni_runtime import run_tool
+                run_tool(args.path.resolve(), 'php', ['-v'])
+            ws = Workspace(args.path)
+            projects = ws.scan()
+            ws.adopt_running()
+            print(f'Workspace mapeado: {ws.root} ({len(projects)} projetos).')
+            for name, item in projects.items(): print(name + ' -> ' + item['path'])
+            return 0
+        if args.command == 'projects':
+            for name, item in load_config(DEFAULT_CONFIG)['projects'].items():
+                print(name + ' | ' + item['repository'])
+            return 0
+        if args.command in ('use', 'back', 'front', 'up', 'down', 'status', 'where'):
+            ws = Workspace()
+            if args.command == 'use':
+                doctor(); ws.switch(args.environment); ws.editor(args.editor)
+            elif args.command in ('back', 'front'): ws.select(args.command)
+            elif args.command in ('up', 'down'): doctor(); ws.operate(args.command)
+            elif args.command == 'where': print(ws.selected_path())
+            else: ws.status()
+            return 0
+        if args.command == 'push':
+            push_project(Path(__file__).resolve().parent if args.cli else current_project(), args.message)
+            return 0
+        if args.command == 'catalog':
+            if args.action == 'sync': sync_catalog(DEFAULT_CONFIG)
+            elif args.action == 'publish': publish_catalog(DEFAULT_CONFIG)
+            else:
+                from urllib.request import urlopen
+                data = load_config(DEFAULT_CONFIG)
+                with urlopen(data['catalog_url'], timeout=20) as response: published = json.load(response)
+                if published != data: raise ValueError('JSON publicado ainda difere do catalogo local.')
+                print('Catalogo publicado confere com o local.')
+            return 0
+        if args.command == 'project':
+            if args.project_action == 'clone':
+                from uni_workspace import clone_project
+                clone_project(Workspace(), args.name, args.no_install)
+            else:
+                name = register_and_publish(args, load_config)
+                print(f"Projeto '{name}' registrado em {args.catalog.resolve()}.")
+            return 0
         if args.command in ('composer', 'libs'):
-            manager = Packages(Path.cwd(), args.catalog)
+            try: project_root = current_project()
+            except ValueError:
+                if args.command != 'libs': raise
+                project_root = Path.cwd()
+            manager = Packages(project_root, args.catalog)
             action = 'list' if args.command == 'libs' else args.composer_action
             if action == 'list': manager.listing()
             elif action == 'show': manager.show(args.package)
@@ -488,19 +498,12 @@ def main() -> int:
             else: manager.change(action, args.packages, getattr(args, 'version', None))
             return 0
         if args.command == "docker":
-            root = Path.cwd().resolve()
-            manifest = json.loads((root / "composer.json").read_text(encoding="utf-8-sig"))
-            name = manifest.get("name", "").split("/")[-1]
-            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
-                raise ValueError("O nome Composer deve terminar com um nome valido para o Docker.")
-            port = manifest.get("extra", {}).get("uni", {}).get("docker", {}).get("port", 8080)
-            if type(port) is not int or not 1 <= port <= 65535:
-                raise ValueError("extra.uni.docker.port deve ser um inteiro entre 1 e 65535.")
-            compose = Path(__file__).resolve().parents[1] / "docker/compose.yaml"
-            if not compose.is_file():
-                raise ValueError("Ambiente Docker nao encontrado ao lado de uni-cli.")
-            environment = {**os.environ, "PROJECT_PATH": str(root), "COMPOSE_PROJECT_NAME": name, "APP_PORT": str(port)}
-            return subprocess.run(["docker", "compose", "-f", str(compose), *(args.arguments or ["up", "-d"])], env=environment).returncode
+            ws = Workspace()
+            if not ws.state.get('selected'): raise ValueError('Selecione um ambiente com uni use.')
+            ws.compose(ws.state['selected'], args.arguments or ['ps'])
+            return 0
+        if args.command in ('create', 'build', 'cache'):
+            os.chdir(current_project())
         if args.command == "create":
             created = scaffold(args.kind, args.name, Path.cwd(), getattr(args, "project", None),
                                getattr(args, "page", None), getattr(args, "layout", "AppLayout"))
@@ -516,8 +519,17 @@ def main() -> int:
             return 0
         if args.command == "cache":
             if getattr(args, "cache_action", None) == "clear":
+                if not Path('/.dockerenv').exists():
+                    from uni_runtime import run_tool
+                    arguments = ['-B', str(Path(__file__).resolve()), 'cache', 'clear']
+                    if args.group: arguments.append(args.group)
+                    run_tool(Path.cwd(), 'python3', arguments)
+                    return 0
                 cache_dir = Path.cwd() / "storage" / "framework" / "cache"
                 target = cache_dir / args.group if args.group else cache_dir
+                if args.group and (not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]*', args.group)
+                                   or not target.resolve().is_relative_to(cache_dir.resolve())):
+                    raise ValueError('Grupo de cache invalido.')
                 if not target.exists():
                     print(f"Diretório de cache não encontrado: {target.relative_to(Path.cwd())}")
                     return 0
@@ -547,21 +559,11 @@ def main() -> int:
                     print(f"Cache geral limpo ({count} arquivo(s) removido(s)).")
                 return 0
         if args.command == "init":
-            manager = Packages(Path.cwd(), args.catalog)
-            selected = select_libraries(args)
-            closure = manager.closure(selected)
-            name = init_project(args.vendor, args.project, Path.cwd(), framework='application' in closure)
-            gitignore = Path.cwd() / '.gitignore'
-            if not gitignore.exists():
-                gitignore.write_text('/vendor/\n/libs/\n/storage/\n/public/assets/\n/.uni-*\n*.compiled.php\n__pycache__/\n', encoding='utf-8')
-            if selected:
-                manager.change('add', selected, no_install=args.no_install)
-            print(f"Projeto '{name}' inicializado.")
-            print("Criados: composer.json, src/Core, src/Programs e src/Config.")
-            print("public/index.php preparado (arquivo existente preservado).")
+            from uni_init import initialize
+            initialize(args, init_project, select_libraries, load_config)
             return 0
         config = load_config(args.config)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"Erro: {exc}", file=sys.stderr)
         return 1
 

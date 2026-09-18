@@ -142,20 +142,8 @@ class Packages:
             raise ValueError('Nome Composer nao corresponde ao catalogo: ' + entry['repository'])
 
     def composer(self, arguments):
-        if shutil.which('composer'):
-            command = ['composer', *arguments]
-            environment = os.environ.copy()
-        else:
-            compose = Path(__file__).resolve().parent.parent / 'docker/compose.yaml'
-            if not shutil.which('docker') or not compose.is_file():
-                raise ValueError('Instale Composer ou disponibilize Docker e o ambiente docker/ do workspace.')
-            manifest = read_json(self.manifest_file)
-            environment = {**os.environ, 'PROJECT_PATH': str(self.root),
-                           'COMPOSE_PROJECT_NAME': manifest['name'].split('/')[-1]}
-            command = ['docker', 'compose', '-f', str(compose), 'run', '--rm', '--entrypoint', 'composer', 'uni', *arguments]
-        result = subprocess.run(command, cwd=self.root, env=environment)
-        if result.returncode:
-            raise ValueError('Composer falhou; consulte a mensagem acima. As fontes locais foram preservadas.')
+        from uni_runtime import run_tool
+        run_tool(self.root, 'composer', arguments)
 
     def managed(self, manifest):
         return manifest.get('extra', {}).get('uni', {}).get('libraries', {})
@@ -169,6 +157,10 @@ class Packages:
         if not isinstance(repositories, list):
             raise ValueError('repositories deve ser uma lista no composer.json.')
         path_repo = next((r for r in repositories if r.get('type') == 'path' and r.get('url') == 'libs/*'), None)
+        if not libraries:
+            if path_repo is not None and 'versions' in path_repo.get('options', {}):
+                repositories.remove(path_repo)
+            return manifest
         if path_repo is None:
             path_repo = {'type': 'path', 'url': 'libs/*'}
             repositories.insert(0, path_repo)
