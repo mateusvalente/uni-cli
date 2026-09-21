@@ -103,16 +103,11 @@ function compileRoutes(string $root): array
                 throw new RuntimeException("Caminho {$path} associado a controllers diferentes: {$byPath[$path]} e {$class}.");
             }
             $byPath[$path] = $class;
-            $start = $method->getStartLine() - 1;
-            $length = $method->getEndLine() - $start;
-            $lines = file($file);
-            $methodCode = implode('', array_slice($lines, $start, $length));
             $routeMeta[$path] = [
                 'path' => $path,
                 'controller' => $class,
-                'file' => $file,
+                'file' => substr($file, strlen($root) + 1),
                 'method' => $method->getName(),
-                'method_code' => $methodCode,
             ];
             // Valida Query/Body/Slug no controller; nao grava em routes.json.
             (new ApplicationCore\Routing\ParameterInspector())->describe($method, $variables, $route['cache']);
@@ -133,10 +128,15 @@ function compileRoutes(string $root): array
 function calculateRouteRevision(array $route, array $frontend, string $root): string
 {
     $hashes = [];
-    $file = $route['file'] ?? null;
-    $methodCode = $route['method_code'] ?? '';
+    $file = isset($route['file']) ? $root . '/' . $route['file'] : null;
+    $methodCode = '';
     if (is_string($file) && is_file($file)) {
         $hashes[] = hash_file('sha256', $file);
+        if (isset($route['method'])) {
+            $method = new ReflectionMethod($route['controller'], $route['method']);
+            $start = $method->getStartLine() - 1;
+            $methodCode = implode('', array_slice(file($file), $start, $method->getEndLine() - $start));
+        }
     }
     if ($methodCode !== '') {
         $hashes[] = hash('sha256', $methodCode);
