@@ -491,7 +491,18 @@ def main() -> int:
         if args.command == 'project':
             if args.project_action == 'clone':
                 from uni_workspace import clone_project
-                clone_project(Workspace(), args.name, args.no_install)
+                ws = Workspace()
+                if args.name in ws.catalog.get('projects', {}):
+                    clone_project(ws, args.name, args.no_install)
+                else:
+                    env_projects = [k for k, v in ws.catalog.get('projects', {}).items() if v.get('environment') == args.name]
+                    if env_projects:
+                        print(f"Clonando ambiente completo: {args.name} ({len(env_projects)} projetos)")
+                        for p in env_projects:
+                            print(f"\n--- Iniciando clone: {p} ---")
+                            clone_project(ws, p, args.no_install)
+                    else:
+                        raise ValueError(f"'{args.name}' nao encontrado como projeto nem como ambiente.")
             else:
                 name = register_and_publish(args, load_config)
                 print(f"Projeto '{name}' registrado em {args.catalog.resolve()}.")
