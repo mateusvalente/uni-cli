@@ -451,8 +451,20 @@ def main() -> int:
             for name, item in projects.items(): print(name + ' -> ' + item['path'])
             return 0
         if args.command == 'projects':
-            for name, item in load_config(DEFAULT_CONFIG)['projects'].items():
-                print(name + ' | ' + item['repository'])
+            config_data = load_config(DEFAULT_CONFIG)
+            environments = {}
+            for name, item in config_data.get('projects', {}).items():
+                env = item.get('environment', 'Sem ambiente')
+                if env not in environments:
+                    environments[env] = []
+                environments[env].append((name, item))
+            
+            for env, projs in environments.items():
+                print(f"Ambiente: {env} (para usar digite: uni use {env})")
+                for p_name, p_item in projs:
+                    role = p_item.get('role', 'desconhecido')
+                    print(f"  - {p_name} ({role}) | {p_item.get('repository', '')}")
+                print()
             return 0
         if args.command in ('use', 'back', 'front', 'up', 'down', 'status', 'where'):
             ws = Workspace()
