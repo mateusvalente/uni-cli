@@ -62,6 +62,7 @@ uni project register https://github.com/usuario/meu-back.git --role back --envir
 uni project register https://github.com/usuario/meu-front.git --role front --environment meu --backend meu-back
 uni project clone meu-back
 uni project clone meu-front
+uni project delete meu-front
 uni catalog sync
 uni catalog publish
 uni catalog verify
@@ -82,6 +83,11 @@ local recuperavel por `uni push --cli`; nao informa sucesso remoto indevidamente
 
 `clone` instala as bibliotecas pelo Composer e atualiza o mapa; use `--no-install`
 para apenas clonar. O caminho local nunca entra no catalogo compartilhado.
+`delete` remove apenas o cadastro do catalogo e publica a alteracao; `--local`
+deixa a publicacao pendente. Projetos associados como backend devem ser
+desassociados antes da exclusao. Repositorios e pastas locais sao preservados.
+Depois de limpar os arquivos locais do projeto, solicite ou exclua manualmente
+a branch correspondente no repositorio Docker; `delete` mostra esse aviso.
 
 ## Criar projeto
 
@@ -100,7 +106,7 @@ O CLI inicializa e publica o Git do projeto, cria/publica a branch Docker a part
 main e publica o catalogo. Cada etapa remota e independente: em falha, os arquivos e
 commits anteriores ficam preservados para recuperacao, sem apagar repositorios.
 `--local` cria sem publicacoes; `--no-install` prepara as fontes sem instalar vendor.
-O nome de namespace PHP e o argumento MeuBack/MeuFront, mapeado diretamente para src/.
+O namespace PHP usa o argumento MeuBack/MeuFront, sem hifens, mapeado para src/.
 
 ## Desenvolvimento e dependencias
 

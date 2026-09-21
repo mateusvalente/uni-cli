@@ -80,7 +80,7 @@ def remote_manifest(repository, directory):
             raise ValueError('O repositorio precisa de composer.json na branch padrao. Para Git vazio, use init ou --path.') from exc
 
 
-def sync_catalog(catalog):
+def sync_catalog(catalog, deleting=None):
     """Consulta o catalogo remoto antes de validar duplicatas; nao perde registros locais."""
     from uni_workspace import git_root, run
     path = Path(catalog).resolve()
@@ -91,14 +91,35 @@ def sync_catalog(catalog):
     remote = json.loads(run(['git', 'show', f'origin/{branch}:{path.name}'], root))
     local = json.loads(path.read_text(encoding='utf-8-sig'))
     baseline = json.loads(run(['git', 'show', f'HEAD:{path.name}'], root))
+    if deleting:
+        target = remote['projects'].get(deleting)
+        if target is not None and target != baseline['projects'].get(deleting):
+            raise ValueError(f'Conflito no catalogo projects.{deleting}; nenhuma publicacao executada.')
+        local['projects'].pop(deleting, None)
     for section in ('libs', 'projects'):
         for key, entry in remote[section].items():
             existing = local[section].get(key)
             old = baseline[section].get(key)
+            if existing is None and old is not None:
+                if entry != old:
+                    raise ValueError(f'Conflito no catalogo {section}.{key}; nenhuma publicacao executada.')
+                continue
             if existing is not None and existing != entry and existing != old and entry != old:
                 raise ValueError(f'Conflito no catalogo {section}.{key}; nenhuma publicacao executada.')
             if existing is None or existing == old:
                 local[section][key] = entry
+        for key, old in baseline[section].items():
+            if key not in remote[section]:
+                existing = local[section].get(key)
+                if existing == old:
+                    del local[section][key]
+                elif existing is not None:
+                    raise ValueError(f'Conflito no catalogo {section}.{key}; nenhuma publicacao executada.')
+    if deleting:
+        dependents = [name for name, entry in local['projects'].items()
+                      if entry.get('related', {}).get('backend') == deleting]
+        if dependents:
+            raise ValueError('Projeto associado como backend de: ' + ', '.join(dependents))
     write_json(path, local)
 
 
@@ -109,7 +130,8 @@ def publish_catalog(catalog):
     branch = run(['git', 'branch', '--show-current'], root)
     if not branch: raise ValueError('Selecione a branch do uni-cli antes de publicar.')
     run(['git', 'fetch', 'origin', branch], root)
-    if run(['git', 'rev-parse', 'HEAD'], root) != run(['git', 'rev-parse', 'origin/' + branch], root):
+    behind, _ = map(int, run(['git', 'rev-list', '--left-right', '--count', f'origin/{branch}...HEAD'], root).split())
+    if behind:
         raise ValueError('Cadastro salvo localmente. Sincronize a branch do uni-cli antes de publicar; nenhum push forcado sera feito.')
     if run(['git', 'diff', '--name-only', '--diff-filter=U'], root):
         raise ValueError('Resolva os conflitos do uni-cli antes de publicar o catalogo.')
@@ -183,3 +205,27 @@ def register_and_publish(args, load_config):
     else:
         print('Registro local; publicacao pendente (uni catalog publish).')
     return name
+
+
+def delete_and_publish(args, load_config):
+    data = load_config(args.catalog)
+    if args.name not in data['projects']:
+        raise ValueError('Projeto nao cadastrado: ' + args.name)
+    entry = data['projects'][args.name]
+    dependents = [name for name, entry in data['projects'].items()
+                  if entry.get('related', {}).get('backend') == args.name]
+    if dependents:
+        raise ValueError('Projeto associado como backend de: ' + ', '.join(dependents))
+    if not args.local:
+        sync_catalog(args.catalog, deleting=args.name)
+    else:
+        del data['projects'][args.name]
+        write_json(Path(args.catalog), data)
+    docker = entry.get('docker') or {}
+    if docker.get('branch'):
+        print(f"Aviso: pastas locais e a branch Docker '{docker['branch']}' em {docker.get('repository', 'seu repositorio Docker')} nao foram apagadas. "
+              'Depois da limpeza local, solicite a exclusao dessa branch ou apague-a manualmente.')
+    if not args.local:
+        publish_catalog(args.catalog)
+    else:
+        print('Exclusao local; publicacao pendente (uni catalog publish).')

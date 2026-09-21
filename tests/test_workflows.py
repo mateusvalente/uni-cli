@@ -96,13 +96,55 @@ class Workflows(unittest.TestCase):
         (repo / 'tool.py').write_text('original')
         self.git(repo, 'add', '.'); self.git(repo, 'commit', '-m', 'Initial')
         self.git(repo, 'remote', 'add', 'origin', remote); self.git(repo, 'push', '-u', 'origin', 'main')
-        write_json(catalog, {'libs': {}, 'projects': {'test': {'name': 'test'}}})
+        write_json(catalog, {'libs': {}, 'projects': {'test': {
+            'repository': 'https://example.com/test.git', 'composer_name': 'example/test', 'root_name': 'test',
+            'docker': {'repository': 'https://example.com/docker.git', 'branch': 'test'}}}})
         (repo / 'tool.py').write_text('unrelated change')
         projects.publish_catalog(catalog)
         published = json.loads(self.git(remote, 'show', 'main:libs_projects.json'))
         self.assertIn('test', published['projects'])
         self.assertEqual(self.git(remote, 'show', 'main:tool.py'), 'original')
         self.assertIn('tool.py', self.git(repo, 'status', '--short'))
+        with patch('builtins.print') as printed:
+            projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=True), uni.load_config)
+        printed.assert_any_call("Aviso: pastas locais e a branch Docker 'test' em https://example.com/docker.git nao foram apagadas. "
+                                'Depois da limpeza local, solicite a exclusao dessa branch ou apague-a manualmente.')
+        projects.sync_catalog(catalog)
+        self.assertNotIn('test', json.loads(catalog.read_text())['projects'])
+        self.git(repo, 'commit', '--allow-empty', '-m', 'Pending local commit')
+        projects.publish_catalog(catalog)
+        self.assertNotIn('test', json.loads(self.git(remote, 'show', 'main:libs_projects.json'))['projects'])
+
+    def test_delete_when_remote_already_lacks_locally_changed_project(self):
+        remote = self.root / 'remote.git'; self.git(self.root, 'init', '--bare', remote)
+        repo = self.root / 'cli'; self.repo(repo)
+        catalog = repo / 'libs_projects.json'; write_json(catalog, {'libs': {}, 'projects': {}})
+        self.git(repo, 'add', '.'); self.git(repo, 'commit', '-m', 'Initial')
+        self.git(repo, 'remote', 'add', 'origin', remote); self.git(repo, 'push', '-u', 'origin', 'main')
+        entry = {'repository': 'https://example.com/test.git', 'composer_name': 'example/old', 'root_name': 'test'}
+        write_json(catalog, {'libs': {}, 'projects': {'test': entry}})
+        self.git(repo, 'add', '.'); self.git(repo, 'commit', '-m', 'Local registration')
+        entry['composer_name'] = 'example/new'
+        write_json(catalog, {'libs': {}, 'projects': {'test': entry}})
+        before = catalog.read_bytes()
+        with patch.object(projects, 'sync_catalog', side_effect=ValueError('fetch failed')):
+            with self.assertRaisesRegex(ValueError, 'fetch failed'):
+                projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=False), uni.load_config)
+        self.assertEqual(catalog.read_bytes(), before)
+        projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=False), uni.load_config)
+        self.assertNotIn('test', json.loads(catalog.read_text())['projects'])
+        self.assertNotIn('test', json.loads(self.git(remote, 'show', 'main:libs_projects.json'))['projects'])
+
+    def test_delete_rejects_registered_backend_dependency(self):
+        write_json(self.catalog, {'libs': {}, 'projects': {
+            'api': {'repository': 'https://example.com/api.git', 'composer_name': 'example/api', 'root_name': 'api'},
+            'front': {'repository': 'https://example.com/front.git', 'composer_name': 'example/front',
+                      'root_name': 'front', 'related': {'backend': 'api'}}}})
+        args = SimpleNamespace(catalog=self.catalog, name='api', local=True)
+        before = self.catalog.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'front'):
+            projects.delete_and_publish(args, uni.load_config)
+        self.assertEqual(self.catalog.read_bytes(), before)
 
     def test_dirty_docker_preflight_does_not_stop_environment(self):
         self.project('candidate-front')
@@ -131,6 +173,12 @@ class Workflows(unittest.TestCase):
         with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws):
             with self.assertRaisesRegex(ValueError, 'cadastrado'):
                 uni_init.initialize(args, uni.init_project, uni.select_libraries, uni.load_config)
+
+    def test_init_accepts_hyphenated_project_name(self):
+        root = self.root / 'new-project'; root.mkdir()
+        self.assertEqual(uni.init_project('example', 'New-Project', root), 'example/new-project')
+        manifest = json.loads((root / 'composer.json').read_text())
+        self.assertEqual(manifest['autoload']['psr-4'], {'NewProject\\': 'src/'})
 
     def test_docker_branch_is_derived_from_main_without_changing_it(self):
         import uni_init

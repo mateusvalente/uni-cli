@@ -82,8 +82,8 @@ def init_project(vendor: str, project: str, root: Path, framework: bool = False)
     """Cria o manifesto e as pastas locais, preservando arquivos existentes."""
     if not re.fullmatch(r"[a-z0-9]+(?:[_.-][a-z0-9]+)*", vendor):
         raise ValueError("O prefixo Composer deve usar letras minusculas e numeros, separados por '.', '_' ou '-'.")
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", project):
-        raise ValueError("O nome do projeto deve comecar com uma letra e conter apenas letras ASCII, numeros ou '_'.")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*", project):
+        raise ValueError("O nome do projeto deve comecar com uma letra e conter apenas letras ASCII, numeros, '_' ou '-'.")
     if project.upper() in {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}:
         raise ValueError("O nome do projeto e reservado pelo Windows.")
 
@@ -111,10 +111,11 @@ def init_project(vendor: str, project: str, root: Path, framework: bool = False)
     if index.is_symlink() or (index.exists() and not index.is_file()):
         raise ValueError("public/index.php deve ser um arquivo regular.")
 
+    namespace = project.replace("-", "")
     manifest = {
         "name": composer_name,
         "type": "project",
-        "autoload": {"psr-4": {f"{project}\\": "src/"}, "exclude-from-classmap": ["**/*.compiled.php"]},
+        "autoload": {"psr-4": {f"{namespace}\\": "src/"}, "exclude-from-classmap": ["**/*.compiled.php"]},
         "extra": {"uni": {"docker": {"port": 8080}}},
     }
     created = []
@@ -357,7 +358,7 @@ def main() -> int:
     )
     init = commands.add_parser("init", help="Criar composer.json e a estrutura do projeto.")
     init.add_argument("vendor", help="Prefixo Composer, por exemplo: uniube.")
-    init.add_argument("project", help="Nome do projeto e namespace, por exemplo: AreaCandidato.")
+    init.add_argument("project", help="Nome do projeto; hifens sao omitidos no namespace PHP.")
     selection = init.add_mutually_exclusive_group()
     selection.add_argument("--libs", nargs='+', help="Nucleos do catalogo; dependencias sao incluidas automaticamente.")
     selection.add_argument("--no-framework", action='store_true', help="Criar projeto sem os nucleos do framework.")
@@ -405,6 +406,10 @@ def main() -> int:
     clone = project_actions.add_parser('clone', help='Clonar um projeto cadastrado na raiz do workspace e instalar dependencias.')
     clone.add_argument('name')
     clone.add_argument('--no-install', action='store_true')
+    delete = project_actions.add_parser('delete', help='Excluir um projeto do catalogo.')
+    delete.add_argument('name')
+    delete.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
+    delete.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
     commands.add_parser("build", help="Compilar rotas, templates, componentes e assets.")
     docker_cmd = commands.add_parser("docker", help="Executar Docker Compose para o projeto atual.")
     docker_cmd.add_argument("arguments", nargs=argparse.REMAINDER, help="Argumentos do Compose, por exemplo up -d.")
@@ -430,7 +435,7 @@ def main() -> int:
 
     try:
         from uni_workspace import Workspace, current_project, doctor, push_project
-        from uni_projects import register_and_publish, sync_catalog, publish_catalog
+        from uni_projects import register_and_publish, delete_and_publish, sync_catalog, publish_catalog
         if args.command == 'shell':
             from uni_shell import install
             install()
@@ -503,6 +508,9 @@ def main() -> int:
                             clone_project(ws, p, args.no_install)
                     else:
                         raise ValueError(f"'{args.name}' nao encontrado como projeto nem como ambiente.")
+            elif args.project_action == 'delete':
+                delete_and_publish(args, load_config)
+                print(f"Projeto '{args.name}' excluido de {args.catalog.resolve()}.")
             else:
                 name = register_and_publish(args, load_config)
                 print(f"Projeto '{name}' registrado em {args.catalog.resolve()}.")
