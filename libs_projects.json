@@ -64,6 +64,18 @@
       },
       "role": "front",
       "environment": "area-candidato"
+    },
+    "colacao-grau": {
+      "repository": "https://github.com/Vinicius0812/colacao-grau.git",
+      "composer_name": "uniube/colacao-grau",
+      "root_name": "colacao-grau",
+      "role": "front",
+      "environment": "colacao-grau",
+      "docker": {
+        "repository": "https://github.com/mateusvalente/docker.git",
+        "branch": "colacao-grau",
+        "directory": "docker-front"
+      }
     }
   },
   "catalog_url": "https://mateusvalente.github.io/uni-cli/libs_projects.json",
