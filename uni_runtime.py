@@ -22,7 +22,8 @@ def container_command(root, executable, arguments):
         elif path.is_absolute() and path.is_relative_to(CLI):
             argument = '/opt/uni-cli/' + path.relative_to(CLI).as_posix()
         mapped.append(argument.rstrip('/') if argument.startswith('/var/www/html/') else argument)
-    return [*command, *mapped], {**os.environ, 'UNI_PROJECT_PATH': str(root), 'UNI_CLI_PATH': str(CLI)}
+    from uni_auth import composer_environment
+    return [*command, *mapped], {**composer_environment(root), 'UNI_PROJECT_PATH': str(root), 'UNI_CLI_PATH': str(CLI)}
 
 
 def run_tool(root, executable, arguments, capture=False):

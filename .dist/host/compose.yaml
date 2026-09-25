@@ -3,6 +3,9 @@ services:
   tools:
     build: .
     working_dir: /var/www/html
+    environment:
+      COMPOSER_ALLOW_SUPERUSER: "1"
+      COMPOSER_AUTH: ${COMPOSER_AUTH:-}
     volumes:
       - ${UNI_PROJECT_PATH:?Projeto necessario}:/var/www/html
       - ${UNI_CLI_PATH:?CLI necessario}:/opt/uni-cli:ro

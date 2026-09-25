@@ -153,7 +153,8 @@ def initialize(args, init_project, select_libraries, load_config):
     if role == 'back' and any(x in closure for x in ('frontend', 'components')):
         raise ValueError('Backend nao pode depender de FrontendCore ou ComponentsCore.')
     init_project(args.vendor, args.project, root, framework='application' in closure)
-    (root / '.gitignore').write_text('/vendor/\n/libs/\n/storage/\n/public/assets/\n/.uni-*\n*.compiled.php\n__pycache__/\n/tests/.tmp/\n', encoding='utf-8')
+    from uni_distribution import prepare_distribution
+    prepare_distribution(root)
     manifest = read_json(root / 'composer.json')
     uni = manifest.setdefault('extra', {}).setdefault('uni', {})
     uni.update(role=role, environment=environment)
@@ -164,7 +165,7 @@ def initialize(args, init_project, select_libraries, load_config):
     elif not args.no_install: manager.composer(['install', '--no-interaction'])
     if 'application' in closure and not args.no_install:
         from uni import build_routes
-        build_routes(root)
+        build_routes(root, update_dependencies=False)
     run(['git', 'init', '-b', 'main'], root)
     if repository: run(['git', 'remote', 'add', 'origin', repository], root)
     run(['git', 'add', '--all'], root)

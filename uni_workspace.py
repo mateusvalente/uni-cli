@@ -16,9 +16,9 @@ CATALOG = CLI / 'libs_projects.json'
 IGNORE = {'.git', '.uni', '.tmp', '.venv', 'vendor', 'libs', 'storage', 'node_modules', 'tests', 'uni-cli'}
 
 
-def run(command, cwd=None, capture=True):
+def run(command, cwd=None, capture=True, environment=None):
     result = subprocess.run(list(map(str, command)), cwd=cwd, text=True, encoding='utf-8',
-                            capture_output=capture, env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'})
+                            capture_output=capture, env={**(environment or os.environ), 'GIT_TERMINAL_PROMPT': '0'})
     if result.returncode:
         detail = (result.stderr or result.stdout or '').strip() if capture else 'Consulte a saida acima.'
         raise ValueError(f"Falha em {command[0]}: {detail}")
@@ -201,7 +201,10 @@ class Workspace:
 
     def compose(self, name, arguments, capture=False):
         folder = self.docker_path(name)
-        return run(['docker', 'compose', '--project-directory', folder, '--env-file', folder / '.env', *arguments], capture=capture)
+        from uni_auth import composer_environment
+        environment = composer_environment(Path(self.state['projects'][name]['path']))
+        return run(['docker', 'compose', '--project-directory', folder, '--env-file', folder / '.env', *arguments],
+                   capture=capture, environment=environment)
 
     def prepare(self, name):
         from uni_projects import repository_identity
@@ -271,7 +274,7 @@ class Workspace:
                     self.compose(name, ['config', '--quiet'])
                 for name in names:
                     started.append(name)
-                    self.compose(name, ['up', '-d', '--wait', '--wait-timeout', '60'])
+                    self.compose(name, ['up', '-d', '--wait', '--wait-timeout', '180'])
                     self.compose(name, ['exec', '-T', 'php', 'php', '-v'], capture=True)
                     self.compose(name, ['exec', '-T', 'nginx', 'nginx', '-t'], capture=True)
             except Exception as error:
@@ -375,7 +378,7 @@ def clone_project(ws, name, no_install=False):
         entries = installed if isinstance(installed, list) else installed.get('packages', [])
         if any(p['name'] == 'uniube/application-core' for p in entries):
             from uni import build_routes
-            build_routes(root)
+            build_routes(root, update_dependencies=False)
     print('Projeto clonado: ' + str(root))
 
 

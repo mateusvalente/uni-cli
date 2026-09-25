@@ -160,14 +160,16 @@ def select_libraries(args):
     return [aliases.get(value, value) for value in re.split(r'[\s,]+', choices)]
 
 
-def build_routes(root: Path) -> int:
+def build_routes(root: Path, update_dependencies=True) -> int:
     """O host apenas solicita o build completo ao worker Linux."""
     if Path('/.dockerenv').exists():
         from uni_build import build_routes as linux_build
-        return linux_build(root)
+        return linux_build(root, update_dependencies=update_dependencies)
     from uni_runtime import run_tool
     worker = Path(__file__).resolve().with_name('uni_build.py')
-    result = run_tool(root.resolve(), 'python3', ['-B', str(worker), '/var/www/html'], capture=True)
+    arguments = ['-B', str(worker), '/var/www/html']
+    if not update_dependencies: arguments.append('--skip-update')
+    result = run_tool(root.resolve(), 'python3', arguments, capture=True)
     return json.loads(result.stdout)['routes']
 
 
@@ -380,6 +382,7 @@ def main() -> int:
     packages.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
     actions = packages.add_subparsers(dest='composer_action', required=True)
     actions.add_parser('install')
+    actions.add_parser('configure', help='Migrar composer.json e regras de publicacao sem baixar pacotes.')
     update = actions.add_parser('update')
     update.add_argument('packages', nargs='*')
     add = actions.add_parser('add')
@@ -421,7 +424,12 @@ def main() -> int:
     delete.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
     delete.add_argument('--docker-repository', help='Repositorio Docker para concluir a exclusao de uma branch orfa.')
     delete.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
-    commands.add_parser("build", help="Compilar rotas, templates, componentes e assets.")
+    build = commands.add_parser("build", help="Atualizar bibliotecas e compilar rotas, templates, componentes e assets.")
+    build.add_argument('--skip-update', action='store_true', help='Compilar as bibliotecas locais sem atualizar.')
+    commands.add_parser('serve', help='Servir o painel local de build e assets (Docker).')
+    for operation in ('minify', 'unminify'):
+        asset = commands.add_parser(operation, help='Processar um arquivo JS/CSS pelo CLI.')
+        asset.add_argument('path', help='Caminho do arquivo dentro do projeto.')
     docker_cmd = commands.add_parser("docker", help="Executar Docker Compose para o projeto atual.")
     docker_cmd.add_argument("arguments", nargs=argparse.REMAINDER, help="Argumentos do Compose, por exemplo up -d.")
     cache_cmd = commands.add_parser("cache", help="Gerenciar o cache de respostas.")
@@ -540,6 +548,9 @@ def main() -> int:
             elif action == 'show': manager.show(args.package)
             elif action == 'search': manager.composer(['search', '--', args.term])
             elif action == 'install': manager.install()
+            elif action == 'configure':
+                manager.configure_project()
+                print('Configuracao preparada. Execute uni composer update para resolver o lock antes de instalar.')
             else: manager.change(action, args.packages, getattr(args, 'version', None))
             return 0
         if args.command == "docker":
@@ -547,8 +558,22 @@ def main() -> int:
             if not ws.state.get('selected'): raise ValueError('Selecione um ambiente com uni use.')
             ws.compose(ws.state['selected'], args.arguments or ['ps'])
             return 0
-        if args.command in ('create', 'build', 'cache'):
+        if args.command in ('create', 'build', 'cache', 'serve', 'minify', 'unminify'):
             os.chdir(current_project())
+        if args.command in ('serve', 'minify', 'unminify'):
+            if not Path('/.dockerenv').exists():
+                from uni_runtime import run_tool
+                arguments = ['-B', str(Path(__file__).resolve()), args.command]
+                if args.command != 'serve':
+                    source = Path(args.path).resolve()
+                    if not source.is_relative_to(Path.cwd()): raise ValueError('Arquivo fora do projeto.')
+                    arguments.append(source.relative_to(Path.cwd()).as_posix())
+                run_tool(Path.cwd(), 'python3', arguments)
+            else:
+                from uni_server import serve, asset_file
+                if args.command == 'serve': serve(Path.cwd())
+                else: print(json.dumps(asset_file(args.command, args.path), ensure_ascii=False))
+            return 0
         if args.command == "create":
             created = scaffold(args.kind, args.name, Path.cwd(), getattr(args, "project", None),
                                getattr(args, "page", None), getattr(args, "layout", "AppLayout"))
@@ -559,7 +584,7 @@ def main() -> int:
                 print("Use $this->response->render(new \\FrontendCore\\View\\View(page: '.../Page.html.php', data: [...])) no controller.")
             return 0
         if args.command == "build":
-            count = build_routes(Path.cwd())
+            count = build_routes(Path.cwd(), update_dependencies=not args.skip_update)
             print(f"Build concluido: {count} rota(s) em routes.json; manifestos em storage/framework/manifest. Etapas executadas conforme os modulos instalados.")
             return 0
         if args.command == "cache":

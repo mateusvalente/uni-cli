@@ -5,17 +5,37 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-def build_routes(root: Path) -> int:
+class BuildBusy(ValueError):
+    pass
+
+
+def build_routes(root: Path, update_dependencies=True) -> int:
     """Serializa a publicacao para que dois builds nao disputem a mesma versao."""
+    started = time.monotonic()
+    root = root.resolve()
+    manifest = json.loads((root / 'composer.json').read_text(encoding='utf-8-sig'))
     with (root / '.uni-build.lock').open('a+b') as lock:
         import fcntl
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ValueError('Outro build esta em andamento neste projeto.') from exc
-        return _build_routes(root)
+            raise BuildBusy('Outro build esta em andamento neste projeto.') from exc
+        if update_dependencies:
+            from uni_packages import Packages
+            manager = Packages(root, Path(__file__).with_name('libs_projects.json'))
+            if manager.managed(manifest): manager.change('update', [])
+            else: manager.composer(['install', '--prefer-dist', '--no-scripts', '--no-interaction'])
+        count = _build_routes(root)
+        from uni_distribution import prepare_distribution
+        prepare_distribution(root)
+        from uni_packages import write_json
+        write_json(root / 'storage/framework/manifest/compiler-status.json',
+                   {'ok': True, 'routes': count, 'seconds': round(time.monotonic() - started, 2),
+                    'completed_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
+        return count
 
 
 def _build_routes(root: Path) -> int:
@@ -61,7 +81,7 @@ def _build_routes(root: Path) -> int:
                 staged_index = stage / "storage/framework/assets/versions.json"
                 staged_index.parent.mkdir(parents=True)
                 staged_index.write_text(json.dumps(index, separators=(",", ":")), encoding="utf-8")
-        result = run(["php", str(compiler), str(root), str(stage)])
+        result = run(["php", "-d", "memory_limit=512M", str(compiler), str(root), str(stage)])
         try:
             document = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
@@ -89,7 +109,7 @@ def _build_routes(root: Path) -> int:
         with (stage / "routes.json").open("w", encoding="utf-8", newline="\n") as stream:
             json.dump(document, stream, indent=2, ensure_ascii=False, allow_nan=False)
             stream.write("\n")
-        # O manifesto ativo só aponta para templates completamente compilados.
+        # O manifesto ativo sÃ³ aponta para templates completamente compilados.
         os.replace(stage / "components.php", manifest_dir / "components.php")
         os.replace(stage / "assets.php", manifest_dir / "assets.php")
         os.replace(stage / "build.php", manifest_dir / "build.php")
@@ -101,7 +121,7 @@ if __name__ == '__main__':
     try:
         if not Path('/.dockerenv').exists():
             raise ValueError('Execute uni build; este worker requer o container Linux.')
-        print(json.dumps({'routes': build_routes(Path(sys.argv[1]))}))
+        print(json.dumps({'routes': build_routes(Path(sys.argv[1]), update_dependencies='--skip-update' not in sys.argv[2:])}))
     except (ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

@@ -1,30 +1,33 @@
 {
   "libs": {
     "application": {
-      "repository": "https://github.com/mateusvalente/application-core.git",
+      "repository": "https://git.uniube.br:3000/Uniube/WebProdFramework-Core-Midware.git",
       "composer_name": "uniube/application-core",
       "root_name": "application-core",
-      "branch": "main",
-      "dependencies": []
+      "branch": "master",
+      "dependencies": [],
+      "provider": "gogs"
     },
     "frontend": {
-      "repository": "https://github.com/mateusvalente/front-end-core.git",
+      "repository": "https://git.uniube.br:3000/Uniube/WebProdFramework-Front.git",
       "composer_name": "uniube/frontend-core",
       "root_name": "frontend-core",
-      "branch": "main",
+      "branch": "master",
       "dependencies": [
         "application"
-      ]
+      ],
+      "provider": "gogs"
     },
     "components": {
-      "repository": "https://github.com/mateusvalente/components-core.git",
+      "repository": "https://git.uniube.br:3000/Uniube/WebProdFramework-Componentes.git",
       "composer_name": "uniube/components-core",
       "root_name": "components-core",
-      "branch": "main",
+      "branch": "master",
       "dependencies": [
         "application",
         "frontend"
-      ]
+      ],
+      "provider": "gogs"
     },
     "backend": {
       "repository": "https://github.com/mateusvalente/backend-core.git",
@@ -64,6 +67,19 @@
       },
       "role": "front",
       "environment": "area-candidato"
+    },
+    "institucional": {
+      "repository": "https://git.uniube.br:3000/Uniube/WebprodInstitucional.git",
+      "composer_name": "uniube/institucional",
+      "root_name": "WebprodInstitucional",
+      "branch": "master",
+      "role": "front",
+      "environment": "institucional",
+      "docker": {
+        "repository": "https://github.com/mateusvalente/docker.git",
+        "branch": "institucional",
+        "directory": "docker-front"
+      }
     }
   },
   "catalog_url": "https://mateusvalente.github.io/uni-cli/libs_projects.json",

@@ -248,10 +248,39 @@ uni cache clear
 uni push --message "Atualiza página de cursos"
 ```
 
-Composer usa clones Git em libs/ e dependências em vendor/. Fontes sujas não são
-substituídas por updates. Remover um pacote preserva seu clone local.
-`build` apenas dispara o worker Linux e mostra o resultado; não percorre links Linux
-nem publica artefatos pelo Windows. Build executa mesmo com os servidores parados.
+O Composer instala os pacotes internos em `libs/`, via repositorios VCS e
+`oomphinc/composer-installers-extender`. As demais dependencias ficam em `vendor/`.
+Downloads `dist` evitam `.git` aninhado; nao sao criados repositorios `path` ou
+symlinks. Os namespaces continuam explicitos no PSR-4 da raiz.
+
+`uni composer configure` migra a configuracao de um projeto existente, preservando
+as demais entradas. Ele nao baixa arquivos nem apaga repositorios aninhados.
+Depois execute `uni composer update` para resolver o lock. Clones antigos em
+`libs/` precisam ser preservados e separados manualmente antes da instalacao.
+
+`uni composer install` reproduz `composer.lock`. `uni composer update` sem nomes
+atualiza somente as bibliotecas gerenciadas; informe os nomes para pacotes externos.
+A resolucao precede a instalacao: se falhar, manifesto e lock sao restaurados.
+Se o download falhar, o lock resolvido permanece para retomar com `install`.
+Fontes locais modificadas bloqueiam atualizacoes; publique as mudancas em um
+clone separado e registre o estado do projeto primeiro. O lock e a fonte das
+revisoes, substituindo os antigos campos `extra.uni.libraries.*.ref`.
+
+`uni build` atualiza as bibliotecas e usa o compilador PHP do proprio CLI para
+produzir rotas, templates, componentes, assets e manifestos. Use
+`uni build --skip-update` para recompilar somente o codigo local. Nao delega a
+`compiler.py`. `uni serve` disponibiliza o painel local no Docker, e
+`uni minify caminho.js` / `uni unminify caminho.js` processam assets.
+
+O Git acompanha `libs/`, `vendor/`, `public/assets/`, os PHP compilados,
+`storage/framework/manifest/{build,assets,components}.php` e
+`storage/framework/assets/`. Cache, logs, credenciais, arquivos temporarios,
+ferramentas e clones `*-core-dev/` ficam ignorados. As regras sao criadas no init
+e atualizadas na migracao/build. Nao se executa update no servidor de producao.
+
+Para pacotes privados, disponibilize `COMPOSER_AUTH` no ambiente local, sem
+versionar credenciais. O container de ferramentas recebe essa variavel.
+
 `uni docker ...` encaminha argumentos ao Compose do projeto selecionado.
 
 `push` exige Git próprio, origin, branch e ausência de conflitos/rebase. Mostra as
