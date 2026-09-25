@@ -193,6 +193,15 @@ class Workflows(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'main'):
                 projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=True), uni.load_config)
 
+    def test_delete_protects_configured_docker_model(self):
+        write_json(self.catalog, {'libs': {}, 'projects': {'test': {
+            'docker': {'repository': 'https://example.invalid/docker.git', 'branch': 'padrao'}
+        }}, 'docker_base_branch': 'padrao'})
+        args = SimpleNamespace(catalog=self.catalog, name='test', local=True)
+        with patch.object(projects, 'repository_identity'):
+            with self.assertRaisesRegex(ValueError, 'padrao'):
+                projects.delete_and_publish(args, uni.load_config)
+
     def test_delete_branch_failure_is_retryable(self):
         remote = self.root / 'catalog.git'; self.git(self.root, 'init', '--bare', remote)
         cli = self.root / 'cli'; self.repo(cli)
@@ -259,7 +268,7 @@ class Workflows(unittest.TestCase):
         manifest = json.loads((root / 'composer.json').read_text())
         self.assertEqual(manifest['autoload']['psr-4'], {'NewProject\\': 'src/'})
 
-    def test_docker_branch_is_derived_from_main_without_changing_it(self):
+    def test_docker_branch_uses_configured_base_without_changing_it(self):
         import uni_init
         template = self.root / 'template'; self.repo(template)
         for name, content in [('uni/Dockerfile', 'FROM php:8.5-cli-alpine\n'),
@@ -268,15 +277,23 @@ class Workflows(unittest.TestCase):
             file = template / name; file.parent.mkdir(parents=True, exist_ok=True); file.write_text(content)
         self.git(template, 'add', '.'); self.git(template, 'commit', '-m', 'Template')
         original = self.git(template, 'rev-parse', 'main')
+        self.git(template, 'switch', '-c', 'padrao')
+        (template / 'base-marker').write_text('padrao')
+        self.git(template, 'add', 'base-marker'); self.git(template, 'commit', '-m', 'Standard model')
+        model = self.git(template, 'rev-parse', 'padrao')
+        self.git(template, 'switch', 'main')
+        write_json(self.catalog, {'libs': {}, 'projects': {}, 'docker_base_branch': 'padrao'})
         ws = work.Workspace(self.root, self.catalog); ws.save()
         env = {'GIT_AUTHOR_NAME': 'CLI Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
                'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
         with patch.object(uni_init, 'repository_identity'), patch.dict(os.environ, env):
             uni_init.docker_branch(ws, 'example-front', 'front', 'example', str(template), 8090, 'example-back', publish=False)
         self.assertEqual(self.git(template, 'rev-parse', 'main'), original)
+        self.assertEqual(self.git(template, 'rev-parse', 'padrao'), model)
         bundle = self.root / '.uni/example-front.docker.bundle'
         clone = self.root / 'check'
         self.git(self.root, 'clone', '-b', 'example-front', bundle, clone)
+        self.assertEqual((clone / 'base-marker').read_text(), 'padrao')
         self.assertIn('http://example-back:80', (clone / 'nginx/default.conf').read_text())
         self.assertIn('external: true', (clone / 'compose.yaml').read_text())
         self.assertTrue((clone / '.env.example').exists())

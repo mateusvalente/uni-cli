@@ -69,19 +69,20 @@ networks:
 
 
 def docker_branch(ws, name, role, environment, repository, port, backend=None, publish=True):
-    """Deriva sempre da main; nunca altera a branch modelo nem ambientes ativos."""
+    """Deriva da branch modelo configurada sem alterar ambientes ativos."""
     repository_identity(repository)
     slug(name); slug(environment)
+    base_branch = slug(ws.catalog.get('docker_base_branch', 'main'))
     scratch = ws.root / '.uni/tmp'
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=scratch, prefix='docker-') as temporary:
         root = Path(temporary) / 'source'
-        run(['git', 'clone', '--branch', 'main', '--single-branch', '--', repository, root])
+        run(['git', 'clone', '--branch', base_branch, '--single-branch', '--', repository, root])
         if run(['git', 'ls-remote', 'origin', 'refs/heads/' + name], root):
             raise ValueError('Branch Docker ja existe: ' + name)
         for required in ['uni/Dockerfile', 'php/start.sh', 'php/development.ini', 'nginx/default.conf']:
             if not (root / required).is_file():
-                raise ValueError('Modelo Docker main incompleto: ' + required)
+                raise ValueError('Modelo Docker ' + base_branch + ' incompleto: ' + required)
         run(['git', 'switch', '-c', name], root)
         compose, nginx = docker_files(name, role, environment, port, backend)
         (root / 'compose.yaml').write_text(compose, encoding='utf-8')
@@ -145,7 +146,9 @@ def initialize(args, init_project, select_libraries, load_config):
     if not docker and not args.local: raise ValueError('Configure docker_repository no catalogo ou informe --docker-repository.')
     if docker:
         repository_identity(docker)
-        if not run(['git', 'ls-remote', docker, 'refs/heads/main']): raise ValueError('Docker precisa da branch modelo main.')
+        base_branch = slug(ws.catalog.get('docker_base_branch', 'main'))
+        if not run(['git', 'ls-remote', docker, 'refs/heads/' + base_branch]):
+            raise ValueError('Docker precisa da branch modelo ' + base_branch + '.')
         if run(['git', 'ls-remote', docker, 'refs/heads/' + name]): raise ValueError('Branch Docker ja existe: ' + name)
     root.mkdir(parents=True, exist_ok=True)
     manager = Packages(root, args.catalog)

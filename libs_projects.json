@@ -76,12 +76,13 @@
       "role": "front",
       "environment": "institucional",
       "docker": {
-        "repository": "https://git.uniube.br:3000/DTI/Docker-WEB.git",
-        "branch": "institucional",
+        "repository": "https://git.uniube.br:3000/DTI/Docker-AVA.git",
+        "branch": "padrao",
         "directory": "docker-front"
       }
     }
   },
   "catalog_url": "https://mateusvalente.github.io/uni-cli/libs_projects.json",
-  "docker_repository": "https://github.com/mateusvalente/docker.git"
+  "docker_repository": "https://git.uniube.br:3000/DTI/Docker-AVA.git",
+  "docker_base_branch": "padrao"
 }

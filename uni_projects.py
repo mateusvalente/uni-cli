@@ -385,8 +385,8 @@ def delete_and_publish(args, load_config):
     if repository:
         repository_identity(repository)
         slug(branch)
-        if branch == 'main':
-            raise ValueError('A branch Docker main nao pode ser excluida: ' + repository)
+        if branch in ('main', data.get('docker_base_branch', 'main')):
+            raise ValueError('A branch modelo Docker ' + branch + ' nao pode ser excluida: ' + repository)
     elif not entry:
         raise ValueError('Projeto nao cadastrado; informe --docker-repository para excluir a branch orfa: ' + args.name)
 

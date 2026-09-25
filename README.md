@@ -71,7 +71,7 @@ uni catalog verify
 `register` pode receber somente o Git: consulta composer.json da branch padrão sem
 executar o código remoto. `--path` permite ler o manifesto local, inclusive para um
 repositório vazio. `--name` escolhe o identificador. O comando valida duplicatas,
-registra associações e prepara uma branch Docker a partir da main se ainda não houver.
+registra associações e prepara uma branch Docker a partir de `docker_base_branch` se ainda não houver.
 Usa `docker_repository` do catálogo ou `--docker-repository`.
 
 Por padrão, publica o cadastro com commit apenas do JSON e push na branch atual do
@@ -112,12 +112,12 @@ repositório da aplicação são preservados.
 
    - **Aplicação nova:** receberá fontes, `composer.json` e a `main` criada pelo CLI.
    - **`uni-cli` existente:** contém `libs_projects.json`; a branch atual já deve existir.
-   - **Docker existente:** contém o modelo; sua `main` já deve existir e ter
+   - **Docker existente:** contém o modelo; sua branch modelo `padrao` já deve existir e ter
      `uni/Dockerfile`, `php/start.sh`, `php/development.ini` e `nginx/default.conf`.
 
    Não crie manualmente a `main` da aplicação nem a branch Docker do projeto. O CLI cria
    a `main` da aplicação e uma branch Docker com o valor de `--name`; não altera a
-   `main` do Docker.
+   `padrao` do Docker.
 
 3. Configure acesso antes de executar o comando. Repositório público pode dispensar
    autenticação para leitura, mas toda escrita exige permissão. A pessoa/conta que roda
