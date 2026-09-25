@@ -213,7 +213,7 @@ branches Docker serem publicadas. Projetos antigos com `--backend` seguem aceito
 
 `--no-framework` cria a base sem núcleos. Sem `--libs` ou `--no-framework`, o terminal
 interativo pergunta quais núcleos usar; em automação informe uma dessas opções.
-`--no-install` prepara manifesto e clones, mas não instala `vendor/`; sem ele, Composer
+`--no-install` prepara o manifesto, mas nao baixa bibliotecas nem instala `vendor/`; sem ele, Composer
 e o build necessário rodam no Docker Linux.
 
 `--local` ainda cria estrutura, `composer.json`, `.gitignore`, Git local e commit inicial.
@@ -248,7 +248,7 @@ uni cache clear
 uni push --message "Atualiza página de cursos"
 ```
 
-O Composer instala os pacotes internos em `libs/`, via repositorios VCS e
+O Composer instala os pacotes internos em `libs/`, com metadados do catalogo e
 `oomphinc/composer-installers-extender`. As demais dependencias ficam em `vendor/`.
 Downloads `dist` evitam `.git` aninhado; nao sao criados repositorios `path` ou
 symlinks. Os namespaces continuam explicitos no PSR-4 da raiz.
@@ -278,8 +278,14 @@ O Git acompanha `libs/`, `vendor/`, `public/assets/`, os PHP compilados,
 ferramentas e clones `*-core-dev/` ficam ignorados. As regras sao criadas no init
 e atualizadas na migracao/build. Nao se executa update no servidor de producao.
 
-Para pacotes privados, disponibilize `COMPOSER_AUTH` no ambiente local, sem
-versionar credenciais. O container de ferramentas recebe essa variavel.
+Para Gogs, o CLI consulta o Git e cria ZIPs imutaveis em `.uni/packages/`;
+mirrors ficam em `.uni/git/`. O Composer resolve e instala esses arquivos.
+O lock registra URL e commit de origem; `uni composer install` reconstroi
+archives ausentes usando a revisao exata. Por isso, use os comandos do CLI
+para preparar um clone novo, em vez de executar Composer diretamente.
+As credenciais Git HTTPS locais sao reutilizadas em memoria e repassadas ao
+Docker via `COMPOSER_AUTH`. Voce tambem pode definir essa variavel no ambiente.
+Credenciais, mirrors e ZIPs nunca devem ser versionados.
 
 `uni docker ...` encaminha argumentos ao Compose do projeto selecionado.
 

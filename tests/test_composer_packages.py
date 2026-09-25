@@ -46,6 +46,9 @@ class ComposerPackages(unittest.TestCase):
         self.assertEqual(manifest['extra']['custom'], 'keep')
         self.assertFalse(manifest['config']['source-fallback'])
         self.assertTrue(all(r['type'] == 'vcs' for r in manifest['repositories']))
+        paths = manifest['extra']['installer-paths']
+        self.assertEqual(list(paths)[-1], 'vendor/{$vendor}/{$name}/')
+        self.assertEqual(paths['vendor/{$vendor}/{$name}/'], ['type:library'])
 
     def test_migrate_metadata_and_path_repository(self):
         manifest = read_json(self.root / 'composer.json')

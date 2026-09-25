@@ -161,6 +161,10 @@ class Packages:
         autoload = manifest.setdefault('autoload', {})
         psr = autoload.setdefault('psr-4', {})
         files = autoload.setdefault('files', [])
+        # Internal manifests own their bootstrap files. Root-level duplicates
+        # would execute the same registration twice after a real install.
+        bootstraps = {'libs/' + e['root_name'] + '/register.php' for e in libraries.values()}
+        files[:] = [f for f in files if f not in bootstraps]
         excluded = autoload.setdefault('exclude-from-classmap', [])
         if '**/*.compiled.php' not in excluded: excluded.append('**/*.compiled.php')
         for alias, known in self.catalog.items():
@@ -179,8 +183,6 @@ class Packages:
                 paths[directory] = [entry['composer_name']]
                 namespace = entry.get('namespace', namespaces.get(alias))
                 if namespace: psr[namespace + chr(92)] = directory
-                if alias in ('frontend', 'components') and directory + 'register.php' not in files:
-                    files.append(directory + 'register.php')
                 continue
             repository = next((r for r in repositories if r.get('url') == entry['repository']), None)
             if repository is None:
@@ -191,8 +193,12 @@ class Packages:
             paths[directory] = [entry['composer_name']]
             namespace = entry.get('namespace', namespaces.get(alias))
             if namespace: psr[namespace + chr(92)] = directory
-            if alias in ('frontend', 'components') and directory + 'register.php' not in files:
-                files.append(directory + 'register.php')
+        # The extender handles every package of type library. It also needs a
+        # fallback for external libraries, after the explicit internal paths.
+        if libraries:
+            fallback = config.get('vendor-dir', 'vendor').rstrip('/') + '/{$vendor}/{$name}/'
+            paths.pop(fallback, None)
+            paths[fallback] = ['type:library']
         return manifest
 
     def configure_project(self):

@@ -54,7 +54,7 @@ def _build_routes(root: Path) -> int:
         from uni_runtime import run_tool
         return run_tool(root, command[0], command[1:], capture=True)
 
-    run(["composer", "dump-autoload", "--optimize", "--strict-psr", "--strict-ambiguous", "--no-scripts", "--no-plugins", "--no-interaction"])
+    run(["composer", "dump-autoload", "--optimize", "--strict-psr", "--strict-ambiguous", "--no-scripts", "--no-interaction"])
     with tempfile.TemporaryDirectory(dir=root, prefix=".uni-build-") as stage_name:
         stage = Path(stage_name).resolve()
         if not stage.is_relative_to(root):
