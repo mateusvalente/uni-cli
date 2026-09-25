@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,6 @@ import uni
 import uni_workspace as work
 import uni_projects as projects
 from uni_packages import write_json
-
 
 class Workflows(unittest.TestCase):
     def setUp(self):
@@ -107,8 +107,7 @@ class Workflows(unittest.TestCase):
         self.assertIn('tool.py', self.git(repo, 'status', '--short'))
         with patch('builtins.print') as printed:
             projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=True), uni.load_config)
-        printed.assert_any_call("Aviso: pastas locais e a branch Docker 'test' em https://example.com/docker.git nao foram apagadas. "
-                                'Depois da limpeza local, solicite a exclusao dessa branch ou apague-a manualmente.')
+        printed.assert_any_call('Exclusao local; branch Docker preservada em https://example.com/docker.git. Publicacao pendente (uni catalog publish).')
         projects.sync_catalog(catalog)
         self.assertNotIn('test', json.loads(catalog.read_text())['projects'])
         self.git(repo, 'commit', '--allow-empty', '-m', 'Pending local commit')
@@ -146,6 +145,80 @@ class Workflows(unittest.TestCase):
             projects.delete_and_publish(args, uni.load_config)
         self.assertEqual(self.catalog.read_bytes(), before)
 
+    def test_delete_removes_docker_branch_and_recovers_orphan(self):
+        remote = self.root / 'catalog.git'; self.git(self.root, 'init', '--bare', remote)
+        cli = self.root / 'cli'; self.repo(cli)
+        catalog = cli / 'libs_projects.json'
+        docker_remote = self.root / 'docker.git'; self.git(self.root, 'init', '--bare', docker_remote)
+        default_remote = self.root / 'default.git'; self.git(self.root, 'init', '--bare', default_remote)
+        docker = self.root / 'docker'; self.repo(docker)
+        (docker / 'README').write_text('template')
+        self.git(docker, 'add', '.'); self.git(docker, 'commit', '-m', 'Template')
+        self.git(docker, 'remote', 'add', 'origin', docker_remote); self.git(docker, 'push', '-u', 'origin', 'main')
+        self.git(docker, 'push', 'origin', 'main:test')
+        self.git(docker, 'remote', 'add', 'default', default_remote); self.git(docker, 'push', 'default', 'main')
+        self.git(docker, 'push', 'default', 'main:test')
+        entry = {'repository': 'https://example.com/test.git', 'composer_name': 'example/test', 'root_name': 'test',
+                 'docker': {'repository': str(docker_remote), 'branch': 'test'}}
+        write_json(catalog, {'libs': {}, 'projects': {'test': entry}, 'docker_repository': str(default_remote)})
+        self.git(cli, 'add', '.'); self.git(cli, 'commit', '-m', 'Catalog')
+        self.git(cli, 'remote', 'add', 'origin', remote); self.git(cli, 'push', '-u', 'origin', 'main')
+        write_json(catalog, {'libs': {}, 'projects': {}, 'docker_repository': str(default_remote)})
+        args = SimpleNamespace(catalog=catalog, name='test', local=False)
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            projects.delete_and_publish(args, uni.load_config)
+            self.assertEqual(self.git(docker, 'ls-remote', 'origin', 'refs/heads/test'), '')
+            self.assertNotEqual(self.git(docker, 'ls-remote', 'default', 'refs/heads/test'), '')
+            self.assertNotIn('test', json.loads(self.git(remote, 'show', 'main:libs_projects.json'))['projects'])
+            write_json(catalog, {'libs': {}, 'projects': {'test': entry}, 'docker_repository': str(default_remote)})
+            self.git(cli, 'add', 'libs_projects.json'); self.git(cli, 'commit', '-m', 'Restore catalog')
+            self.git(cli, 'push')
+            projects.delete_and_publish(args, uni.load_config)
+            self.git(docker, 'push', 'origin', 'main:test')
+            with self.assertRaisesRegex(ValueError, 'informe --docker-repository'):
+                projects.delete_and_publish(args, uni.load_config)
+            projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=False,
+                                                        docker_repository=str(docker_remote)), uni.load_config)
+            self.assertEqual(self.git(docker, 'ls-remote', 'origin', 'refs/heads/test'), '')
+            self.assertNotEqual(self.git(docker, 'ls-remote', 'default', 'refs/heads/test'), '')
+            with self.assertRaisesRegex(ValueError, 'nao existe'):
+                projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=False,
+                                                            docker_repository=str(docker_remote)), uni.load_config)
+            write_json(catalog, {'libs': {}, 'projects': {'test': {**entry, 'docker': {'repository': str(docker_remote), 'branch': 'main'}}}})
+            with self.assertRaisesRegex(ValueError, 'main'):
+                projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=True), uni.load_config)
+
+    def test_delete_branch_failure_is_retryable(self):
+        remote = self.root / 'catalog.git'; self.git(self.root, 'init', '--bare', remote)
+        cli = self.root / 'cli'; self.repo(cli)
+        catalog = cli / 'libs_projects.json'
+        docker_remote = self.root / 'docker.git'; self.git(self.root, 'init', '--bare', docker_remote)
+        docker = self.root / 'docker'; self.repo(docker)
+        (docker / 'README').write_text('template')
+        self.git(docker, 'add', '.'); self.git(docker, 'commit', '-m', 'Template')
+        self.git(docker, 'remote', 'add', 'origin', docker_remote); self.git(docker, 'push', '-u', 'origin', 'main')
+        self.git(docker, 'push', 'origin', 'main:test')
+        entry = {'repository': 'https://example.com/test.git', 'composer_name': 'example/test', 'root_name': 'test',
+                 'docker': {'repository': str(docker_remote), 'branch': 'test'}}
+        write_json(catalog, {'libs': {}, 'projects': {'test': entry}, 'docker_repository': str(docker_remote)})
+        self.git(cli, 'add', '.'); self.git(cli, 'commit', '-m', 'Catalog')
+        self.git(cli, 'remote', 'add', 'origin', remote); self.git(cli, 'push', '-u', 'origin', 'main')
+        original_run = work.run
+        def fail_delete(command, *args, **kwargs):
+            if list(map(str, command)) == ['git', 'push', str(docker_remote), '--delete', 'test']:
+                raise ValueError('remote rejected')
+            return original_run(command, *args, **kwargs)
+        args = SimpleNamespace(catalog=catalog, name='test', local=False)
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value), patch.object(work, 'run', side_effect=fail_delete):
+            with self.assertRaisesRegex(ValueError, re.escape(str(docker_remote))):
+                projects.delete_and_publish(args, uni.load_config)
+        self.assertNotIn('test', json.loads(self.git(remote, 'show', 'main:libs_projects.json'))['projects'])
+        self.assertNotEqual(self.git(docker, 'ls-remote', 'origin', 'refs/heads/test'), '')
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            projects.delete_and_publish(SimpleNamespace(catalog=catalog, name='test', local=False,
+                                                        docker_repository=str(docker_remote)), uni.load_config)
+        self.assertEqual(self.git(docker, 'ls-remote', 'origin', 'refs/heads/test'), '')
+
     def test_dirty_docker_preflight_does_not_stop_environment(self):
         self.project('candidate-front')
         ws = work.Workspace(self.root, self.catalog); ws.scan()
@@ -160,7 +233,7 @@ class Workflows(unittest.TestCase):
         args = SimpleNamespace(catalog=self.catalog, local=True, vendor='example', project='NewProject',
                                name='new-project', role='front', environment='new-project', port=8099,
                                backend=None, path=None, repository=None, docker_repository=None,
-                               no_install=True, no_framework=True, libs=None)
+                               no_install=True, no_framework=True, libs=None, no_link=True)
         env = {**os.environ, 'GIT_AUTHOR_NAME': 'CLI Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
                'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
         with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), patch.dict(os.environ, env):
@@ -169,6 +242,7 @@ class Workflows(unittest.TestCase):
         self.assertTrue((root / 'public/index.php').is_file())
         self.assertEqual(json.loads((root / 'composer.json').read_text())['autoload']['psr-4'], {'NewProject\\': 'src/'})
         self.assertNotIn('ApplicationCore', (root / 'public/index.php').read_text())
+        self.assertFalse(json.loads((root / 'composer.json').read_text())['extra']['uni']['related']['link_requested'])
         self.assertIn('new-project', ws.state['projects'])
         with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws):
             with self.assertRaisesRegex(ValueError, 'cadastrado'):
@@ -219,7 +293,7 @@ class Workflows(unittest.TestCase):
         args = SimpleNamespace(catalog=catalog, local=False, vendor='example', project='Demo', name='demo',
                                role='front', environment='demo', port=8098, backend=None, path=None,
                                repository=str(project_remote), docker_repository=str(template),
-                               no_install=True, no_framework=True, libs=None)
+                               no_install=True, no_framework=True, libs=None, no_link=True)
         env = {'GIT_AUTHOR_NAME': 'CLI Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
                'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
         with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), patch.object(uni_init, 'repository_identity'), patch.object(projects, 'repository_identity', side_effect=lambda value: value), patch.dict(os.environ, env):
@@ -229,6 +303,202 @@ class Workflows(unittest.TestCase):
         self.assertEqual(json.loads(self.git(project_remote, 'show', 'main:composer.json'))['name'], 'example/demo')
         published = json.loads(self.git(catalog_remote, 'show', 'main:libs_projects.json'))
         self.assertEqual(published['projects']['demo']['docker']['branch'], 'demo')
+
+    def pair_workspace(self):
+        import uni_init
+        cli = self.root / 'cli'; self.repo(cli)
+        catalog = cli / 'libs_projects.json'
+        write_json(catalog, {'libs': {}, 'projects': {}})
+        self.git(cli, 'add', '.'); self.git(cli, 'commit', '-m', 'Catalog')
+        catalog_remote = self.root / 'catalog.git'; self.git(self.root, 'init', '--bare', catalog_remote)
+        self.git(cli, 'remote', 'add', 'origin', catalog_remote); self.git(cli, 'push', '-u', 'origin', 'main')
+        docker = self.root / 'docker-template'; self.repo(docker)
+        for name in ['uni/Dockerfile', 'php/start.sh', 'php/development.ini', 'nginx/default.conf']:
+            file = docker / name; file.parent.mkdir(parents=True, exist_ok=True); file.write_text('# template\n')
+        self.git(docker, 'add', '.'); self.git(docker, 'commit', '-m', 'Template')
+        ws = work.Workspace(self.root, catalog); ws.scan()
+        env = {'GIT_AUTHOR_NAME': 'CLI Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+               'GIT_COMMITTER_NAME': 'CLI Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
+        return uni_init, ws, catalog, docker, env
+
+    def create_pair_member(self, role, requested, fixture, backend=None):
+        uni_init, ws, catalog, docker, env = fixture
+        name = 'demo-' + role
+        remote = self.root / (name + '.git'); self.git(self.root, 'init', '--bare', remote)
+        args = SimpleNamespace(catalog=catalog, local=False, vendor='example', project='Demo' + role.title(),
+                               name=name, role=role, environment='demo', port=8080 if role == 'front' else 8082,
+                               backend=backend, path=None, repository=str(remote), docker_repository=str(docker),
+                               no_install=True, no_framework=True, libs=None, link=requested,
+                               no_link=not requested)
+        with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), \
+                patch.object(uni_init, 'repository_identity'), \
+                patch.object(projects, 'repository_identity', side_effect=lambda value: value), patch.dict(os.environ, env):
+            uni_init.initialize(args, uni.init_project, uni.select_libraries, uni.load_config)
+        return name
+
+    def assert_pair_linked(self, order):
+        fixture = self.pair_workspace()
+        for role in order:
+            self.create_pair_member(role, True, fixture)
+        _, _, catalog, docker, _ = fixture
+        data = uni.load_config(catalog)
+        self.assertEqual(data['projects']['demo-front']['related']['backend'], 'demo-back')
+        self.assertIn('http://demo-back:80', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+
+    def test_pair_links_backend_first(self):
+        self.assert_pair_linked(('back', 'front'))
+
+    def test_pair_links_frontend_first(self):
+        self.assert_pair_linked(('front', 'back'))
+
+    def test_independent_front_stays_unlinked_until_explicit_link(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        self.assertEqual(fixture[1].members('demo'), ['demo-front'])
+        self.create_pair_member('back', True, fixture)
+        _, _, catalog, docker, _ = fixture
+        self.assertNotIn('backend', uni.load_config(catalog)['projects']['demo-front']['related'])
+        self.assertNotIn('proxy_pass $backend', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+            projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertEqual(uni.load_config(catalog)['projects']['demo-front']['related']['backend'], 'demo-back')
+        self.assertIn('http://demo-back:80', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+
+    def test_interactive_back_can_override_independent_front(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        with patch.object(projects.sys, 'stdin', SimpleNamespace(isatty=lambda: True)), \
+                patch('builtins.input', return_value='s') as answer:
+            self.create_pair_member('back', True, fixture)
+        answer.assert_called_once()
+        catalog, docker = fixture[2], fixture[3]
+        self.assertEqual(uni.load_config(catalog)['projects']['demo-front']['related']['backend'], 'demo-back')
+        self.assertIn('http://demo-back:80', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+
+    def test_interactive_back_respects_refusal(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        with patch.object(projects.sys, 'stdin', SimpleNamespace(isatty=lambda: True)), \
+                patch('builtins.input', return_value='n') as answer:
+            self.create_pair_member('back', True, fixture)
+        answer.assert_called_once()
+        catalog, docker = fixture[2], fixture[3]
+        self.assertNotIn('backend', uni.load_config(catalog)['projects']['demo-front']['related'])
+        self.assertNotIn('proxy_pass $backend', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+
+    def test_backend_flag_keeps_legacy_explicit_link(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('back', False, fixture)
+        self.create_pair_member('front', True, fixture, backend='demo-back')
+        catalog, docker = fixture[2], fixture[3]
+        self.assertEqual(uni.load_config(catalog)['projects']['demo-front']['related']['backend'], 'demo-back')
+        self.assertIn('http://demo-back:80', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+
+    def test_link_rejects_customized_generated_files(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        self.create_pair_member('back', False, fixture)
+        catalog, docker = fixture[2], fixture[3]
+        self.git(docker, 'switch', 'demo-front')
+        with (docker / 'compose.yaml').open('a') as output:
+            output.write('\n# customizado\n')
+        self.git(docker, 'add', 'compose.yaml'); self.git(docker, 'commit', '-m', 'Customize')
+        self.git(docker, 'switch', 'main')
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            with self.assertRaisesRegex(ValueError, 'personalizados'):
+                projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertNotIn('backend', uni.load_config(catalog)['projects']['demo-front']['related'])
+
+    def test_link_push_failure_is_retryable(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        self.create_pair_member('back', False, fixture)
+        catalog, docker = fixture[2], fixture[3]
+        original_run = work.run
+        def reject_push(command, *args, **kwargs):
+            if command[:3] == ['git', 'push', 'origin'] and command[-1] == 'HEAD:demo-front':
+                raise ValueError('push rejected')
+            return original_run(command, *args, **kwargs)
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value), \
+                patch.object(work, 'run', side_effect=reject_push):
+            with self.assertRaisesRegex(ValueError, 'repita: uni project link'):
+                projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertNotIn('backend', uni.load_config(catalog)['projects']['demo-front']['related'])
+        self.assertNotIn('proxy_pass $backend', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertEqual(uni.load_config(catalog)['projects']['demo-front']['related']['backend'], 'demo-back')
+
+    def test_link_catalog_failure_restores_relation_and_retries(self):
+        fixture = self.pair_workspace()
+        self.create_pair_member('front', False, fixture)
+        self.create_pair_member('back', False, fixture)
+        catalog, docker = fixture[2], fixture[3]
+        original_run = work.run
+        def reject_catalog_push(command, *args, **kwargs):
+            if command[:3] == ['git', 'push', 'origin'] and command[-1] == 'HEAD:main':
+                raise ValueError('catalog push rejected')
+            return original_run(command, *args, **kwargs)
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value), \
+                patch.object(work, 'run', side_effect=reject_catalog_push):
+            with self.assertRaisesRegex(ValueError, 'catalogo local restaurado'):
+                projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertNotIn('backend', uni.load_config(catalog)['projects']['demo-front']['related'])
+        self.assertEqual(json.loads(self.git(catalog.parent, 'show', 'HEAD:libs_projects.json'))
+                         ['projects']['demo-front']['related']['backend'], 'demo-back')
+        self.assertNotIn('backend', json.loads(self.git(self.root / 'catalog.git', 'show', 'main:libs_projects.json'))
+                         ['projects']['demo-front']['related'])
+        self.assertIn('http://demo-back:80', self.git(docker, 'show', 'demo-front:nginx/default.conf'))
+        with patch.object(projects, 'repository_identity', side_effect=lambda value: value):
+            projects.link_projects('demo-front', 'demo-back', catalog, uni.load_config)
+        self.assertEqual(uni.load_config(catalog)['projects']['demo-front']['related']['backend'], 'demo-back')
+
+    def test_link_choice_requires_flags_without_tty(self):
+        args = SimpleNamespace(backend=None, link=False, no_link=False)
+        with patch.object(projects.sys, 'stdin', SimpleNamespace(isatty=lambda: False)):
+            with self.assertRaisesRegex(ValueError, '--link ou --no-link'):
+                projects.choose_link(args, 'front')
+        self.assertTrue(projects.choose_link(SimpleNamespace(backend='demo-back', link=False, no_link=False), 'front'))
+        with self.assertRaisesRegex(ValueError, '--backend e --no-link'):
+            projects.choose_link(SimpleNamespace(backend='demo-back', link=False, no_link=True), 'front')
+
+    def test_register_preserves_existing_role_and_local_intention(self):
+        folder = self.project('service')
+        data = {'libs': {}, 'projects': {'service': {
+            'repository': 'https://example.com/service.git', 'composer_name': 'example/service',
+            'root_name': 'service', 'role': 'back', 'environment': 'demo'}}}
+        write_json(self.catalog, data)
+        args = SimpleNamespace(catalog=self.catalog, local=True, repository='https://example.com/service.git',
+                               path=folder, name='service', role=None, environment='demo', backend=None,
+                               docker_repository=None, link=False, no_link=True)
+        with patch.object(projects, 'register_project', return_value='service'), \
+                patch.object(work, 'Workspace', side_effect=ValueError('mapa indisponivel')):
+            projects.register_and_publish(args, uni.load_config)
+        self.assertEqual(uni.load_config(self.catalog)['projects']['service']['role'], 'back')
+        manifest = json.loads((folder / 'composer.json').read_text())
+        self.assertFalse(manifest['extra']['uni']['related']['link_requested'])
+
+    def test_local_init_records_intention_without_remote_link(self):
+        import uni_init
+        fixture = self.pair_workspace()
+        _, ws, catalog, docker, env = fixture
+        remote = self.root / 'local-project.git'; self.git(self.root, 'init', '--bare', remote)
+        args = SimpleNamespace(catalog=catalog, local=True, vendor='example', project='LocalFront',
+                               name='local-front', role='front', environment='local', port=8090,
+                               backend=None, path=None, repository=str(remote), docker_repository=str(docker),
+                               no_install=True, no_framework=True, libs=None, link=True, no_link=False)
+        with patch.object(uni_init, 'doctor'), patch.object(uni_init, 'Workspace', return_value=ws), \
+                patch.object(uni_init, 'repository_identity'), \
+                patch.object(projects, 'repository_identity', side_effect=lambda value: value), patch.dict(os.environ, env):
+            uni_init.initialize(args, uni.init_project, uni.select_libraries, uni.load_config)
+        entry = uni.load_config(catalog)['projects']['local-front']
+        self.assertTrue(entry['related']['link_requested'])
+        self.assertNotIn('backend', entry['related'])
+        self.assertNotIn('docker', entry)
+        self.assertEqual(self.git(self.root, 'ls-remote', remote), '')
+        manifest = json.loads((self.root / 'local-front/composer.json').read_text())
+        self.assertTrue(manifest['extra']['uni']['related']['link_requested'])
 
     def test_failure_restores_previous_selection_and_env(self):
         self.project('candidate-front'); self.project('other-front')

@@ -6,26 +6,13 @@ from pathlib import Path
 
 from uni_packages import Packages, read_json, write_json
 from uni_projects import (repository_identity, register_project, configure_registration,
-                          sync_catalog, publish_catalog)
+                          sync_catalog, publish_catalog, choose_link, matching_project,
+                          planned_backend, auto_link)
 from uni_workspace import Workspace, doctor, run, slug
 
 
-def docker_branch(ws, name, role, environment, repository, port, backend=None, publish=True):
-    """Deriva sempre da main; nunca altera a branch modelo nem ambientes ativos."""
-    repository_identity(repository)
-    slug(name); slug(environment)
-    scratch = ws.root / '.uni/tmp'
-    scratch.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=scratch, prefix='docker-') as temporary:
-        root = Path(temporary) / 'source'
-        run(['git', 'clone', '--branch', 'main', '--single-branch', '--', repository, root])
-        if run(['git', 'ls-remote', 'origin', 'refs/heads/' + name], root):
-            raise ValueError('Branch Docker ja existe: ' + name)
-        for required in ['uni/Dockerfile', 'php/start.sh', 'php/development.ini', 'nginx/default.conf']:
-            if not (root / required).is_file():
-                raise ValueError('Modelo Docker main incompleto: ' + required)
-        run(['git', 'switch', '-c', name], root)
-        compose = f'''name: ${{COMPOSE_PROJECT_NAME:-{name}}}
+def docker_files(name, role, environment, port, backend=None):
+    compose = f'''name: ${{COMPOSE_PROJECT_NAME:-{name}}}
 services:
   php:
     image: php:8.5-fpm-alpine
@@ -52,9 +39,8 @@ networks:
   environment:
     name: ${{ENVIRONMENT_NETWORK:-{environment}-network}}
 '''
-        if backend: compose += '    external: true\n'
-        (root / 'compose.yaml').write_text(compose, encoding='utf-8')
-        proxy = f'''    resolver 127.0.0.11 valid=10s ipv6=off;
+    if backend: compose += '    external: true\n'
+    proxy = f'''    resolver 127.0.0.11 valid=10s ipv6=off;
     location ~ ^/api(?:/|$) {{
         set $backend http://{backend}:80;
         proxy_set_header Host $http_host;
@@ -63,7 +49,7 @@ networks:
         proxy_pass $backend$request_uri;
     }}
 ''' if backend else ''
-        nginx = '''server {
+    nginx = '''server {
     listen 80;
     root /var/www/html/public;
     index index.php;
@@ -79,6 +65,26 @@ networks:
     location ~ /\\. { deny all; }
 }
 '''
+    return compose, nginx
+
+
+def docker_branch(ws, name, role, environment, repository, port, backend=None, publish=True):
+    """Deriva sempre da main; nunca altera a branch modelo nem ambientes ativos."""
+    repository_identity(repository)
+    slug(name); slug(environment)
+    scratch = ws.root / '.uni/tmp'
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch, prefix='docker-') as temporary:
+        root = Path(temporary) / 'source'
+        run(['git', 'clone', '--branch', 'main', '--single-branch', '--', repository, root])
+        if run(['git', 'ls-remote', 'origin', 'refs/heads/' + name], root):
+            raise ValueError('Branch Docker ja existe: ' + name)
+        for required in ['uni/Dockerfile', 'php/start.sh', 'php/development.ini', 'nginx/default.conf']:
+            if not (root / required).is_file():
+                raise ValueError('Modelo Docker main incompleto: ' + required)
+        run(['git', 'switch', '-c', name], root)
+        compose, nginx = docker_files(name, role, environment, port, backend)
+        (root / 'compose.yaml').write_text(compose, encoding='utf-8')
         (root / 'nginx/default.conf').write_text(nginx, encoding='utf-8')
         (root / '.gitattributes').write_text('* text=auto\n*.sh text eol=lf\n*.conf text eol=lf\n*.yaml text eol=lf\n', encoding='utf-8')
         (root / '.gitignore').write_text('.env\n.env.*\n!.env.example\n', encoding='utf-8')
@@ -112,6 +118,7 @@ def initialize(args, init_project, select_libraries, load_config):
         raise ValueError('Nome Composer ja cadastrado.')
     role = args.role or ('back' if name.endswith('-back') else 'front')
     environment = slug(args.environment or re.sub(r'-(front|back)$', '', name))
+    requested = choose_link(args, role)
     if args.port is not None and not 1 <= args.port <= 65535:
         raise ValueError('Porta deve estar entre 1 e 65535.')
     if role in ws.state['environments'].get(environment, {}):
@@ -119,6 +126,8 @@ def initialize(args, init_project, select_libraries, load_config):
     if args.backend and args.backend not in ws.catalog['projects']:
         raise ValueError('Backend nao cadastrado: ' + args.backend)
     if args.backend and role != 'front': raise ValueError('Somente frontend pode associar backend.')
+    if args.backend:
+        matching_project(name, role, environment, ws.catalog, args.backend)
     selected = select_libraries(args)
     root = Path(args.path).resolve() if args.path else ws.root / name
     if root.exists() and any(root.iterdir()):
@@ -149,7 +158,7 @@ def initialize(args, init_project, select_libraries, load_config):
     uni = manifest.setdefault('extra', {}).setdefault('uni', {})
     uni.update(role=role, environment=environment)
     uni['docker'] = {'port': args.port or (8082 if role == 'back' else 8080)}
-    if args.backend: uni['related'] = {'backend': args.backend}
+    uni['related'] = {'link_requested': requested}
     write_json(root / 'composer.json', manifest)
     if selected: manager.change('add', selected, no_install=args.no_install)
     elif not args.no_install: manager.composer(['install', '--no-interaction'])
@@ -163,13 +172,15 @@ def initialize(args, init_project, select_libraries, load_config):
     # Registra antes das publicacoes: se o push falhar, o trabalho fica recuperavel.
     if repository:
         register_project(repository, root, args.catalog, name, load_config)
-        configure_registration(name, args.catalog, role, environment, args.backend, None)
+        configure_registration(name, args.catalog, role, environment, args.backend, None, requested)
     ws.catalog = load_config(args.catalog); ws.scan()
     if not args.local:
         run(['git', 'push', '-u', 'origin', 'main'], root, capture=False)
-        docker_branch(ws, name, role, environment, docker, uni['docker']['port'], args.backend)
-        configure_registration(name, args.catalog, role, environment, args.backend, docker)
+        backend = planned_backend(name, role, environment, load_config(args.catalog), args.backend)
+        docker_branch(ws, name, role, environment, docker, uni['docker']['port'], backend)
+        configure_registration(name, args.catalog, role, environment, args.backend, docker, requested)
         publish_catalog(args.catalog)
+        auto_link(name, args.catalog, load_config, args.backend)
         ws.catalog = load_config(args.catalog); ws.scan()
     print('Projeto criado no Windows: ' + str(root))
     if args.local: print('Modo local: repositorios e catalogo nao foram publicados.')

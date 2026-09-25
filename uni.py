@@ -370,6 +370,9 @@ def main() -> int:
     init.add_argument('--role', choices=['front', 'back'])
     init.add_argument('--environment')
     init.add_argument('--backend', help='Identificador do backend associado.')
+    init_link = init.add_mutually_exclusive_group()
+    init_link.add_argument('--link', action='store_true', help='Solicitar vinculo entre front e back.')
+    init_link.add_argument('--no-link', action='store_true', help='Criar sem vinculo entre front e back.')
     init.add_argument('--port', type=int)
     init.add_argument('--docker-repository')
     init.add_argument('--local', action='store_true', help='Criar localmente, sem publicar Git/catalogo.')
@@ -401,14 +404,22 @@ def main() -> int:
     register.add_argument('--role', choices=['front', 'back'])
     register.add_argument('--environment')
     register.add_argument('--backend')
+    register_link = register.add_mutually_exclusive_group()
+    register_link.add_argument('--link', action='store_true', help='Solicitar vinculo entre front e back.')
+    register_link.add_argument('--no-link', action='store_true', help='Registrar sem vinculo entre front e back.')
     register.add_argument('--docker-repository')
     register.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
     clone = project_actions.add_parser('clone', help='Clonar um projeto cadastrado na raiz do workspace e instalar dependencias.')
     clone.add_argument('name')
     clone.add_argument('--no-install', action='store_true')
+    link = project_actions.add_parser('link', help='Vincular explicitamente um frontend e um backend.')
+    link.add_argument('front')
+    link.add_argument('back')
+    link.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
     delete = project_actions.add_parser('delete', help='Excluir um projeto do catalogo.')
     delete.add_argument('name')
     delete.add_argument('--catalog', type=Path, default=DEFAULT_CONFIG)
+    delete.add_argument('--docker-repository', help='Repositorio Docker para concluir a exclusao de uma branch orfa.')
     delete.add_argument('--local', action='store_true', help='Salvar sem publicar o catalogo.')
     commands.add_parser("build", help="Compilar rotas, templates, componentes e assets.")
     docker_cmd = commands.add_parser("docker", help="Executar Docker Compose para o projeto atual.")
@@ -435,7 +446,7 @@ def main() -> int:
 
     try:
         from uni_workspace import Workspace, current_project, doctor, push_project
-        from uni_projects import register_and_publish, delete_and_publish, sync_catalog, publish_catalog
+        from uni_projects import register_and_publish, delete_and_publish, link_projects, sync_catalog, publish_catalog
         if args.command == 'shell':
             from uni_shell import install
             install()
@@ -510,7 +521,10 @@ def main() -> int:
                         raise ValueError(f"'{args.name}' nao encontrado como projeto nem como ambiente.")
             elif args.project_action == 'delete':
                 delete_and_publish(args, load_config)
-                print(f"Projeto '{args.name}' excluido de {args.catalog.resolve()}.")
+                print(f"Limpeza do projeto '{args.name}' concluida.")
+            elif args.project_action == 'link':
+                link_projects(args.front, args.back, args.catalog, load_config)
+                print(f"Projetos '{args.front}' e '{args.back}' vinculados.")
             else:
                 name = register_and_publish(args, load_config)
                 print(f"Projeto '{name}' registrado em {args.catalog.resolve()}.")
