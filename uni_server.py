@@ -125,11 +125,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, asset_file(data.get('action'), data['path']))
             else:
                 self.respond(200, build())
-        except ValueError as error:
-            self.respond(400, {'ok': False, 'error': str(error)})
         except BuildBusy as error:
             self.respond(409, {'ok': False, 'error': str(error)})
-        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        except ValueError as error:
+            self.respond(400, {'ok': False, 'error': str(error)})
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
             self.respond(500, {'ok': False, 'error': str(error)})
 
 

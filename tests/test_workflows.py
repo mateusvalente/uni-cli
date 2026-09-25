@@ -61,6 +61,11 @@ class Workflows(unittest.TestCase):
         with patch('builtins.input', return_value=''), patch.object(work, 'sys_stdin_tty', return_value=True), patch.object(work.subprocess, 'run') as run:
             ws.editor(); run.assert_not_called()
 
+    def test_editor_eof_keeps_selected_environment(self):
+        ws = work.Workspace(self.root, self.catalog)
+        with patch('builtins.input', side_effect=EOFError), patch.object(work, 'sys_stdin_tty', return_value=True), patch.object(work.subprocess, 'run') as run:
+            ws.editor(); run.assert_not_called()
+
     def test_remote_registration_preserves_associations_and_rejects_duplicates(self):
         response = SimpleNamespace(returncode=0, stdout='ref: refs/heads/main\tHEAD\n')
         with patch.object(projects, 'remote_manifest', return_value={'name': 'example/api'}), patch.object(projects.subprocess, 'run', return_value=response):

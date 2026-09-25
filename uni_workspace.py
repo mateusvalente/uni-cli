@@ -323,7 +323,10 @@ class Workspace:
         if choice is None:
             if not sys_stdin_tty(): return
             print('1. Nao alterar janelas (padrao)\n2. Abrir novas janelas\n3. Reutilizar a janela atual do VS Code')
-            choice = input('VS Code [1]: ').strip() or '1'
+            try:
+                choice = input('VS Code [1]: ').strip() or '1'
+            except EOFError:
+                return
         if choice in ('1', 'none'): return
         if choice not in ('2', '3', 'new', 'reuse'): raise ValueError('Opcao de editor invalida.')
         code = shutil.which('code')
