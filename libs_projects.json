@@ -76,7 +76,7 @@
       "role": "front",
       "environment": "institucional",
       "docker": {
-        "repository": "https://github.com/mateusvalente/docker.git",
+        "repository": "https://git.uniube.br:3000/DTI/Docker-WEB.git",
         "branch": "institucional",
         "directory": "docker-front"
       }
