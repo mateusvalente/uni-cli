@@ -195,6 +195,9 @@ class Workflows(unittest.TestCase):
 
     def test_delete_protects_configured_docker_model(self):
         write_json(self.catalog, {'libs': {}, 'projects': {'test': {
+            'repository': 'https://example.invalid/test.git',
+            'composer_name': 'example/test',
+            'root_name': 'test',
             'docker': {'repository': 'https://example.invalid/docker.git', 'branch': 'padrao'}
         }}, 'docker_base_branch': 'padrao'})
         args = SimpleNamespace(catalog=self.catalog, name='test', local=True)
